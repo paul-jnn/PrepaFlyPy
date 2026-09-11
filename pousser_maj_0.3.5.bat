@@ -41,7 +41,7 @@ echo [2/6] Ajout des fichiers...
 git add .
 
 echo [3/6] Commit...
-git commit -m "PrepaFlyPy 0.3.1 (fix demarrage serveur + interface embarquee) : coeur SORA/regimes/DJI, API, UI web, CLI, tests, CI"
+git commit -m "PrepaFlyPy 0.3.5 (installateur par utilisateur + maj auto corrigee) : coeur SORA/regimes/DJI, API, UI web, CLI, tests, CI"
 
 echo [4/6] Configuration du depot distant...
 git remote get-url origin >nul 2>&1
@@ -60,9 +60,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [6/6] Tag de version v0.3.1 (declenche la construction des .exe)...
-git tag v0.3.1
-git push origin v0.3.1
+echo [6/6] Tag de version v0.3.5 (declenche la construction des .exe)...
+git tag v0.3.5
+git push origin v0.3.5
 
 echo.
 echo ================================================================

@@ -120,23 +120,42 @@ rm -f "$0"
 """
 
 
+def _dir_writable(d: str) -> bool:
+    """Teste réellement l'écriture dans le dossier (fiable sous Windows)."""
+    try:
+        p = os.path.join(d, ".prepafly_wtest")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("1")
+        os.remove(p)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def apply_update() -> bool:
     """Télécharge la dernière version et programme le remplacement + relance.
 
     Après l'appel, l'application doit se fermer (le serveur le fait) pour libérer
     l'exe : le script de bascule prend alors le relais. Lève une exception si la
-    mise à jour auto n'est pas possible (mode dev, pas d'exe dans la release…).
+    mise à jour auto n'est pas possible (mode dev, dossier protégé, pas d'exe…) —
+    l'interface propose alors le téléchargement manuel.
     """
     if not is_frozen():
         raise RuntimeError("Mise à jour automatique disponible uniquement dans l'exécutable "
                            "(en développement, relancez depuis les sources).")
+    exe = os.path.abspath(sys.executable)   # l'exe en cours d'exécution
+    exe_dir = os.path.dirname(exe)
+    if not _dir_writable(exe_dir):
+        raise RuntimeError("Application installée dans un dossier protégé (Program Files) : "
+                           "téléchargez et réinstallez la dernière version depuis la page des versions.")
     rel = _latest_release()
     url = _asset_url(rel)
     if not url:
         raise RuntimeError("Aucun exécutable trouvé dans la dernière version publiée.")
 
-    exe = os.path.abspath(sys.executable)   # l'exe en cours d'exécution
-    new = exe + ".new"
+    # On télécharge dans un dossier temporaire (toujours accessible en écriture),
+    # puis le script de bascule déplace le fichier par-dessus l'exe.
+    new = os.path.join(tempfile.gettempdir(), "PrepaFlyPy_update" + (".exe" if os.name == "nt" else ""))
     _download(url, new)
 
     if os.name == "nt":

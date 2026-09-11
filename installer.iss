@@ -16,6 +16,10 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=M.G.I. - Maintenance Generale Industrielle
 AppPublisherURL=https://github.com/paul-jnn/PrepaFlyPy
+; Installation PAR UTILISATEUR (dans %LocalAppData%\Programs) : aucun droit
+; administrateur requis, dossier accessible en écriture -> la mise à jour
+; automatique fonctionne sans UAC. On n'autorise pas l'installation « tous
+; utilisateurs » (Program Files), qui bloquerait l'auto-remplacement de l'exe.
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -26,7 +30,6 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
