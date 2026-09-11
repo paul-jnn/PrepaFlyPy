@@ -1,0 +1,59 @@
+name: release
+
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: PrepaFlyPy-windows.exe
+            binpath: dist/PrepaFlyPy.exe
+          - os: ubuntu-latest
+            artifact: PrepaFlyPy-linux
+            binpath: dist/PrepaFlyPy
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Dépendances système (Linux, pour pywebview)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-webkit2-4.1 || true
+
+      - name: Installer le projet et PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,desktop]"
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Construire l'exécutable
+        run: pyinstaller prepafly.spec
+
+      - name: Renommer l'artefact
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "${{ matrix.binpath }}" "out/${{ matrix.artifact }}"
+
+      - name: Publier dans la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/${{ matrix.artifact }}
+          name: "PrepaFlyPy ${{ github.ref_name }}"
+          body: "Exécutables Windows / Linux de PrepaFlyPy ${{ github.ref_name }}."
+          draft: false
+          prerelease: false

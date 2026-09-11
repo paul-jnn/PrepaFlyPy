@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# PyInstaller
+*.spec.bak
+
+# Tests / couverture
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Données locales éventuelles (ne jamais committer de données personnelles)
+*.local.json
+_data/
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
