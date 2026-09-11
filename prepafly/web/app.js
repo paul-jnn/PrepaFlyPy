@@ -3,6 +3,7 @@
    Toute action passe par une route /api/... ; ici on construit les écrans et on
    affiche les réponses. Pas de logique métier (SORA, régimes, PDF) côté client :
    elle vit dans prepafly.core, appelée via l'API. Voir prepafly/server.py.
+   Interface bilingue FR/EN : tout libellé visible passe par t('clé') (voir i18n.py).
    ============================================================================= */
 "use strict";
 
@@ -21,10 +22,13 @@ async function apiPdf(path,body){
 let store=null, dronesDB=null, meta=null, strings={}, lang='fr';
 let current='exploitant', currentDossierId='', dossierTab='mission';
 let saveTimer=null, sectionOpen={}, pilotOpen={};
+try{ lang=localStorage.getItem('prepafly_lang')||'fr'; }catch(e){}
 
 /* Traduction : renvoie la chaîne de la langue courante, avec substitution {var}. */
 function t(k,vars){ let s=(strings&&strings[k])||k; if(vars){for(const kk in vars)s=s.split('{'+kk+'}').join(vars[kk]);} return s; }
-async function setLang(code){ if(code===lang)return; lang=code; try{ strings=await apiGet('/api/i18n/'+code); }catch(e){} renderNav(); renderView(); }
+async function loadStrings(){ try{ strings=await apiGet('/api/i18n/'+lang); }catch(e){ strings={}; } }
+async function setLang(code){ if(code===lang)return; lang=code; try{ localStorage.setItem('prepafly_lang',code); }catch(e){}
+  await loadStrings(); renderNav(); renderView(); }
 
 /* ---------- Petits outils de rendu ---------- */
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
@@ -68,20 +72,28 @@ function field(label,obj,key,opts){
 function badge(cls,txt){return el('span','badge '+cls,txt);}
 
 /* ---------- Sauvegarde ---------- */
-function setSave(t){ const e=document.getElementById('saveState'); if(e)e.textContent=t; }
-async function persist(){ try{ await apiSend('/api/store','PUT',store); setSave('Enregistré ✓'); }catch(e){ setSave('Erreur d’enregistrement'); } }
-function scheduleSave(){ setSave('Modification…'); clearTimeout(saveTimer); saveTimer=setTimeout(persist,450); }
+function setSave(msg){ const e=document.getElementById('saveState'); if(e)e.textContent=msg; }
+async function persist(){ try{ await apiSend('/api/store','PUT',store); setSave(t('save_saved')); }catch(e){ setSave(t('save_err')); } }
+function scheduleSave(){ setSave(t('save_modif')); clearTimeout(saveTimer); saveTimer=setTimeout(persist,450); }
 
-/* ---------- Constantes métier (libellés d'interface) ---------- */
+/* ---------- Options de listes déroulantes (traduites à chaque rendu) ---------- */
 const CLASSES=[['','—'],['C0','C0'],['C1','C1'],['C2','C2'],['C3','C3'],['C4','C4'],['C5','C5'],['C6','C6']];
-const TYPEVOL=[['','—'],['VLOS','VLOS (en vue)'],['BVLOS','BVLOS (hors vue)']];
-const ENVOPTS=[['','—'],['hors','Hors zone peuplée'],['peuple','Zone peuplée'],['rassemblement','Rassemblement de personnes']];
-const DIST=[['','—'],['150m','≥ 150 m'],['30m','30 m'],['5m','5 m (basse vitesse)'],['0','Survol possible']];
-const DENSITE=[['','—'],['ctrl','Zone contrôlée (tiers exclus)'],['d5','< 5 hab/km²'],['d50','< 50 hab/km²'],
-  ['d500','< 500 hab/km²'],['d5000','< 5 000 hab/km²'],['d50000','< 50 000 hab/km²'],['dsup','Rassemblement']];
-const YN=[['','—'],['yes','Oui'],['no','Non']];
-const ARC_RES=[['','(= ARC initial)'],['a','a'],['b','b'],['c','c'],['d','d']];
+function optTypevol(){ return [['','—'],['VLOS',t('tv_vlos')],['BVLOS',t('tv_bvlos')]]; }
+function optEnv(){ return [['','—'],['hors',t('env_hors')],['peuple',t('env_peuple')],['rassemblement',t('env_rass')]]; }
+function optDist(){ return [['','—'],['150m',t('dist_150')],['30m',t('dist_30')],['5m',t('dist_5')],['0',t('dist_0')]]; }
+function optDensite(){ return [['','—'],['ctrl',t('den_ctrl')],['d5',t('den_d5')],['d50',t('den_d50')],
+  ['d500',t('den_d500')],['d5000',t('den_d5000')],['d50000',t('den_d50000')],['dsup',t('den_dsup')]]; }
+function optYN(){ return [['','—'],['yes',t('yes')],['no',t('no')]]; }
+function optArcRes(){ return [['',t('arcres_default')],['a','a'],['b','b'],['c','c'],['d','d']]; }
+function optMitA(){ return [['none',t('mit_absent_low')],['low',t('mit_low')],['med',t('mit_med')]]; }
+function optMitB(){ return [['none',t('mit_absent')],['med',t('mit_med')],['high',t('mit_high')]]; }
+function optMit2(){ return [['none',t('mit_absent_low')],['med',t('mit_med')],['high',t('mit_high')]]; }
+function optSouscat(){ return [['','—'],['A1','A1'],['A2','A2'],['A3','A3']]; }
+function optPdra(){ return [['','—'],['S01','S01'],['S02','S02'],['G01','G01'],['G02','G02'],['G03','G03']]; }
+
 const MENTIONS=['A1','A2','A3','STS-01','STS-02','CATS'];
+/* Check-list pré-vol : ces libellés servent AUSSI de clés de stockage et sont
+   repris tels quels dans le PDF — on les garde donc en français, non traduits. */
 const PREVOL=['NOTAM / SUP AIP consultés','Météo dans les limites','Zones & restrictions vérifiées (Géoportail)',
   'Périmètre de sécurité défini','Matériel & hélices vérifiés','Batteries chargées','Assurance RC à jour',
   'Documents à bord (exploitant, télépilote)','Consignes d’urgence rappelées','Briefing équipage effectué'];
@@ -103,23 +115,25 @@ const MARCHES=[
 /* ---------- Verrou PIN ---------- */
 async function boot(){
   try{ meta=await apiGet('/api/meta'); }catch(e){ meta={version:'?'}; }
+  await loadStrings();
   const st=await apiGet('/api/pin/status');
-  const t=document.getElementById('lockText'), pin=document.getElementById('pin'),
+  const lt=document.getElementById('lockText'), pin=document.getElementById('pin'),
         pin2=document.getElementById('pin2'), btn=document.getElementById('lockBtn'), err=document.getElementById('lockErr');
-  pin.style.display='block'; btn.style.display='block';
+  pin.style.display='block'; btn.style.display='block'; btn.textContent=t('pin_validate');
+  pin2.placeholder=t('pin_confirm_ph');
   if(!st.set){
-    t.textContent='Choisissez un code PIN (4 chiffres min.) pour protéger l’accès.';
+    lt.textContent=t('pin_choose');
     pin2.style.display='block';
     btn.onclick=async()=>{ err.textContent='';
-      if(pin.value.length<4){err.textContent='4 chiffres minimum.';return;}
-      if(pin.value!==pin2.value){err.textContent='Les codes ne correspondent pas.';return;}
+      if(pin.value.length<4){err.textContent=t('pin_min');return;}
+      if(pin.value!==pin2.value){err.textContent=t('pin_mismatch');return;}
       try{ await apiSend('/api/pin/set','POST',{pin:pin.value}); unlock(); }catch(e){ err.textContent=String(e.message||e); }
     };
   } else {
-    t.textContent='Entrez votre code PIN.';
+    lt.textContent=t('pin_enter');
     btn.onclick=async()=>{ err.textContent='';
       const r=await apiSend('/api/pin/verify','POST',{pin:pin.value});
-      if(r.ok) unlock(); else err.textContent='Code incorrect.';
+      if(r.ok) unlock(); else err.textContent=t('pin_wrong');
     };
     pin.addEventListener('keydown',e=>{ if(e.key==='Enter')btn.click(); });
   }
@@ -130,7 +144,6 @@ async function unlock(){
   document.getElementById('app').style.display='grid';
   store=await apiGet('/api/store');
   dronesDB=await apiGet('/api/drones');
-  try{ strings=await apiGet('/api/i18n/'+lang); }catch(e){ strings={}; }
   renderNav(); renderView(); checkUpdate(); firstRun();
 }
 /* Premier lancement : propose d'ajouter les raccourcis (Bureau + menu Démarrer). */
@@ -150,7 +163,7 @@ async function firstRun(){
   no.onclick=async()=>{ try{ await apiSend('/api/setup','POST',{shortcuts:false}); }catch(e){} close(); };
   yes.onclick=async()=>{ yes.disabled=true; yes.textContent='…';
     try{ const r=await apiSend('/api/setup','POST',{shortcuts:true}); close(); alert(t('setup_done',{where:(r.created||[]).join(', ')})); }
-    catch(e){ close(); alert('Création des raccourcis impossible : '+(e.message||e)); } };
+    catch(e){ close(); alert(t('setup_fail',{e:(e.message||e)})); } };
 }
 async function checkUpdate(){
   try{ const u=await apiGet('/api/update'); const bar=document.getElementById('updbar');
@@ -167,14 +180,14 @@ async function checkUpdate(){
   }catch(e){}
 }
 async function applyUpdate(btn,url){
-  btn.disabled=true; btn.textContent='Téléchargement…';
+  btn.disabled=true; btn.textContent='…';
   try{
     await apiSend('/api/update/apply','POST',{});
-    btn.textContent='Redémarrage…';
+    btn.textContent='…';
   }catch(e){
     btn.disabled=false; btn.textContent=t('update_install');
     if(url) window.open(url,'_blank');
-    alert('Mise à jour automatique impossible : '+(e.message||e)+'\nLa page de téléchargement a été ouverte.');
+    alert(t('update_fail',{e:(e.message||e)}));
   }
 }
 
@@ -194,7 +207,6 @@ function renderNav(){
   const brand=el('div','brand');
   brand.innerHTML='<img src="/static/logo.png" alt="" style="width:24px;height:24px;border-radius:6px"> PrepaFlyPy';
   s.appendChild(brand);
-  // Bascule de langue FR / EN.
   const lg=el('div'); lg.style.cssText='display:flex;gap:6px;padding:2px 20px 10px';
   [['fr','FR'],['en','EN']].forEach(([code,lab])=>{ const b=el('button','langbtn'+(lang===code?' on':''),lab); b.onclick=()=>setLang(code); lg.appendChild(b); });
   s.appendChild(lg);
@@ -217,104 +229,101 @@ function renderView(){
 /* ---------- Exploitant ---------- */
 function viewExploitant(v){
   v.appendChild(el('h1','page-h',t('nav_exploitant')));
-  v.appendChild(el('p','page-sub','Renseigné une fois, repris dans chaque dossier et document.'));
+  v.appendChild(el('p','page-sub',t('exploitant_sub')));
   const e=store.exploitant;
-  const {card:c,body:cb}=collCard('exp-id','Référentiel','Identité de l’exploitant','Alimente le ConOps, les Cerfa et les rapports.');
+  const {card:c,body:cb}=collCard('exp-id',t('exp_ref_kick'),t('exp_ref_title'),t('exp_ref_desc'));
   const g=el('div','grid');
-  g.append(field('Raison sociale',e,'raison'),field('Forme juridique',e,'forme'),
-    field('SIRET',e,'siret'),field('N° exploitant UAS',e,'numUAS'),
-    field('Responsable',e,'responsable'),field('Assureur RC',e,'assureur'),
-    field('Adresse',e,'adresse'),field('N° police assurance',e,'police'),
-    field('Code postal',e,'cp'),field('Ville',e,'ville'),
-    field('Téléphone',e,'tel'),field('Courriel',e,'mail'));
-  cb.appendChild(g); cb.appendChild(field('Notes',e,'notes',{type:'textarea',full:true}));
+  g.append(field(t('f_raison'),e,'raison'),field(t('f_forme'),e,'forme'),
+    field(t('f_siret'),e,'siret'),field(t('f_numuas'),e,'numUAS'),
+    field(t('f_resp'),e,'responsable'),field(t('f_assureur'),e,'assureur'),
+    field(t('f_adresse'),e,'adresse'),field(t('f_police'),e,'police'),
+    field(t('f_cp'),e,'cp'),field(t('f_ville'),e,'ville'),
+    field(t('f_tel'),e,'tel'),field(t('f_mail'),e,'mail'));
+  cb.appendChild(g); cb.appendChild(field(t('f_notes'),e,'notes',{type:'textarea',full:true}));
   v.appendChild(c);
 
-  const {card:lc,body:lb}=collCard('exp-logo','Image de marque','Logo','Repris en en-tête du MANEX et des rapports. Stocké localement.',false);
+  const {card:lc,body:lb}=collCard('exp-logo',t('exp_logo_kick'),t('exp_logo_title'),t('exp_logo_desc'),false);
   const bar=el('div','row-actions');
-  const imp=el('button','btn primary','⬆ Importer un logo (PNG/JPG)');
+  const imp=el('button','btn primary',t('btn_import_logo'));
   imp.onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='image/*';i.onchange=()=>importLogo(i.files[0]);i.click();};
   bar.appendChild(imp);
-  if(store.logo){const rm=el('button','btn danger','Retirer');rm.onclick=()=>{store.logo='';scheduleSave();renderView();};bar.appendChild(rm);}
+  if(store.logo){const rm=el('button','btn danger',t('remove'));rm.onclick=()=>{store.logo='';scheduleSave();renderView();};bar.appendChild(rm);}
   lb.appendChild(bar);
   if(store.logo){const img=document.createElement('img');img.src=store.logo;img.style.cssText='max-height:80px;border:1px solid var(--bord);border-radius:8px;padding:6px;background:#fff';lb.appendChild(img);}
-  else lb.appendChild(el('div','note','Aucun logo importé.'));
+  else lb.appendChild(el('div','note',t('logo_none')));
   v.appendChild(lc);
 }
 function importLogo(file){
-  if(!file)return; if(file.size>2097152){alert('Logo trop lourd (max 2 Mo).');return;}
+  if(!file)return; if(file.size>2097152){alert(t('logo_too_big'));return;}
   const r=new FileReader(); r.onload=()=>{store.logo=r.result;scheduleSave();renderView();}; r.readAsDataURL(file);
 }
 
 /* ---------- Télépilotes (accordéon) ---------- */
 function viewPilotes(v){
   v.appendChild(el('h1','page-h',t('nav_pilotes')));
-  v.appendChild(el('p','page-sub','Cliquez un nom pour dérouler sa fiche. Le référent alimente les formulaires.'));
-  const add=el('button','btn primary','+ Ajouter un télépilote');
+  v.appendChild(el('p','page-sub',t('pilotes_sub')));
+  const add=el('button','btn primary',t('btn_add_pilot'));
   add.onclick=()=>{store.pilotes.push({id:'p'+Math.random().toString(36).slice(2,10),prenom:'',nom:'',tel:'',mail:'',numTele:'',brevets:'',mentions:[],habilitations:[],notes:''});scheduleSave();renderView();};
   v.appendChild(add); v.appendChild(el('div',null,'')).style.height='12px';
-  if(!store.pilotes.length){ v.appendChild(el('div','note','Aucun télépilote. Ajoutez-en un.')); return; }
+  if(!store.pilotes.length){ v.appendChild(el('div','note',t('pilots_none'))); return; }
   store.pilotes.forEach(p=>{
     if(pilotOpen[p.id]===undefined)pilotOpen[p.id]=false;
     const open=pilotOpen[p.id];
     const acc=el('div','acc'+(open?' open':''));
     const head=el('div','acc-head'); head.appendChild(el('span','chev','▶'));
-    const nm=el('div','nm',((p.prenom||'')+' '+(p.nom||'')).trim()||'(sans nom)'); head.appendChild(nm);
-    if(store.referent===p.id) head.appendChild(badge('b-green','Référent'));
+    const nm=el('div','nm',((p.prenom||'')+' '+(p.nom||'')).trim()||t('pilot_noname')); head.appendChild(nm);
+    if(store.referent===p.id) head.appendChild(badge('b-green',t('badge_ref')));
     const body=el('div','acc-body'); body.hidden=!open;
     head.onclick=()=>{const o=!body.hidden;body.hidden=o;acc.classList.toggle('open',!o);pilotOpen[p.id]=!o;};
-    // corps
     const rowb=el('div','row-actions');
-    const ref=el('button','btn sm'+(store.referent===p.id?' primary':''),store.referent===p.id?'Référent ✓':'Définir référent');
+    const ref=el('button','btn sm'+(store.referent===p.id?' primary':''),store.referent===p.id?t('btn_ref_isset'):t('btn_ref_set'));
     ref.onclick=()=>{store.referent=p.id;scheduleSave();renderView();};
-    const del=el('button','btn danger sm','Supprimer');
-    del.onclick=()=>{if(!confirm('Supprimer ce télépilote ?'))return;store.pilotes=store.pilotes.filter(x=>x.id!==p.id);if(store.referent===p.id)store.referent='';scheduleSave();renderView();};
+    const del=el('button','btn danger sm',t('btn_delete'));
+    del.onclick=()=>{if(!confirm(t('confirm_del_pilot')))return;store.pilotes=store.pilotes.filter(x=>x.id!==p.id);if(store.referent===p.id)store.referent='';scheduleSave();renderView();};
     rowb.append(ref,del); body.appendChild(rowb);
     const g=el('div','grid');
-    g.append(field('Prénom',p,'prenom',{after:()=>{nm.textContent=((p.prenom||'')+' '+(p.nom||'')).trim()||'(sans nom)';}}),
-      field('Nom',p,'nom',{after:()=>{nm.textContent=((p.prenom||'')+' '+(p.nom||'')).trim()||'(sans nom)';}}),
-      field('Téléphone',p,'tel'),field('Courriel',p,'mail'),
-      field('N° télépilote',p,'numTele'),field('Brevets / formations',p,'brevets'));
+    const upd=()=>{nm.textContent=((p.prenom||'')+' '+(p.nom||'')).trim()||t('pilot_noname');};
+    g.append(field(t('f_prenom'),p,'prenom',{after:upd}),field(t('f_nom'),p,'nom',{after:upd}),
+      field(t('f_tel'),p,'tel'),field(t('f_mail'),p,'mail'),
+      field(t('f_numtele'),p,'numTele'),field(t('f_brevets'),p,'brevets'));
     body.appendChild(g);
-    // mentions (cases à cocher)
-    body.appendChild(el('div','note','Mentions / qualifications'));
+    body.appendChild(el('div','note',t('pilot_mentions')));
     const chips=el('div','chips');
     MENTIONS.forEach(m=>{const on=p.mentions.includes(m);const b=el('button','chip'+(on?' on':''),m);
       b.onclick=()=>{if(p.mentions.includes(m))p.mentions=p.mentions.filter(x=>x!==m);else p.mentions.push(m);scheduleSave();renderView();};chips.appendChild(b);});
     body.appendChild(chips);
-    // habilitations avec dates
-    body.appendChild(el('div','note','Habilitations (avec date de validité)'));
+    body.appendChild(el('div','note',t('pilot_habil')));
     p.habilitations.forEach((h,i)=>{
       const row=el('div','row-actions');
-      const it=el('input');it.value=h.t||'';it.placeholder='Intitulé (ex. NF C 18-510)';it.style.flex='1';
+      const it=el('input');it.value=h.t||'';it.placeholder=t('habil_ph');it.style.flex='1';
       it.oninput=()=>{h.t=it.value;scheduleSave();};
       const dt=el('input');dt.type='date';dt.value=h.d||'';dt.oninput=()=>{h.d=dt.value;scheduleSave();renderView();};
       const stt=habStatus(h.d); const bd=stt?badge('b-'+stt.cls,stt.txt):badge('b-grey','—');
       const rm=el('button','btn danger sm','−');rm.onclick=()=>{p.habilitations.splice(i,1);scheduleSave();renderView();};
       row.append(it,dt,bd,rm); body.appendChild(row);
     });
-    const addH=el('button','btn sm','+ Habilitation');addH.onclick=()=>{p.habilitations.push({t:'',d:''});scheduleSave();renderView();};
+    const addH=el('button','btn sm',t('btn_add_habil'));addH.onclick=()=>{p.habilitations.push({t:'',d:''});scheduleSave();renderView();};
     body.appendChild(addH);
-    body.appendChild(field('Notes',p,'notes',{type:'textarea',full:true}));
+    body.appendChild(field(t('f_notes'),p,'notes',{type:'textarea',full:true}));
     acc.append(head,body); v.appendChild(acc);
   });
 }
-function habStatus(d){ if(!d)return null; const t=new Date();t.setHours(0,0,0,0); const dt=new Date(d+'T00:00:00'); if(isNaN(dt))return null;
-  const days=Math.round((dt-t)/86400000); if(days<0)return{cls:'red',txt:'Périmé'}; if(days<=60)return{cls:'orange',txt:'À renouveler ('+days+' j)'}; return{cls:'green',txt:'Valide'};}
+function habStatus(d){ if(!d)return null; const now=new Date();now.setHours(0,0,0,0); const dt=new Date(d+'T00:00:00'); if(isNaN(dt))return null;
+  const days=Math.round((dt-now)/86400000); if(days<0)return{cls:'red',txt:t('hab_perime')}; if(days<=60)return{cls:'orange',txt:t('hab_renew',{d:days})}; return{cls:'green',txt:t('hab_valid')};}
 
 /* ---------- Dossiers (liste) ---------- */
 function viewDossiers(v){
   v.appendChild(el('h1','page-h',t('nav_dossiers')));
-  v.appendChild(el('p','page-sub','Une mission = un dossier (appareil, régime, analyse, check-list, journal, PDF).'));
-  const add=el('button','btn primary','+ Nouveau dossier');
-  add.onclick=()=>{const d=emptyDossier();d.titre='Nouvelle mission';d.date=new Date().toISOString().slice(0,10);store.dossiers.push(d);store.currentId=d.id;currentDossierId=d.id;dossierTab='mission';scheduleSave();renderView();};
+  v.appendChild(el('p','page-sub',t('dossiers_sub')));
+  const add=el('button','btn primary',t('btn_new_dossier'));
+  add.onclick=()=>{const d=emptyDossier();d.titre=t('dossier_new_title');d.date=new Date().toISOString().slice(0,10);store.dossiers.push(d);store.currentId=d.id;currentDossierId=d.id;dossierTab='mission';scheduleSave();renderView();};
   v.appendChild(add); v.appendChild(el('div',null,'')).style.height='12px';
-  if(!store.dossiers.length){ v.appendChild(el('div','note','Aucun dossier.')); return; }
+  if(!store.dossiers.length){ v.appendChild(el('div','note',t('dossiers_none'))); return; }
   store.dossiers.forEach(d=>{
     const c=card(null,null,null); c.style.cursor='pointer';
     c.onclick=()=>{currentDossierId=d.id;store.currentId=d.id;dossierTab='mission';renderView();};
     const h=el('div',null); h.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:10px';
-    const left=el('div'); left.appendChild(el('h2',null,d.titre||'(sans titre)'));
+    const left=el('div'); left.appendChild(el('h2',null,d.titre||t('dossier_notitle')));
     left.appendChild(el('div','note',[d.lieu||d.siteVille,d.date].filter(Boolean).join(' · ')||'—'));
     h.appendChild(left);
     if(d.regime) h.appendChild(badge('b-blue',(({open:'OPEN',sts:'STS',pdra:'PDRA',sora:'SORA'})[d.regime])||d.regime));
@@ -334,54 +343,54 @@ function curDossier(){ return store.dossiers.find(d=>d.id===currentDossierId)||n
 function viewDossier(v){
   const D=curDossier(); if(!D){currentDossierId='';return renderView();}
   const top=el('div',null); top.style.cssText='display:flex;justify-content:space-between;align-items:center';
-  const back=el('button','btn sm','← Dossiers'); back.onclick=()=>{currentDossierId='';renderView();};
+  const back=el('button','btn sm',t('back_dossiers')); back.onclick=()=>{currentDossierId='';renderView();};
   top.appendChild(back);
-  const del=el('button','btn danger sm','Supprimer ce dossier');
-  del.onclick=()=>{if(!confirm('Supprimer ce dossier ?'))return;store.dossiers=store.dossiers.filter(x=>x.id!==D.id);currentDossierId='';scheduleSave();renderView();};
+  const del=el('button','btn danger sm',t('btn_del_dossier'));
+  del.onclick=()=>{if(!confirm(t('confirm_del_dossier')))return;store.dossiers=store.dossiers.filter(x=>x.id!==D.id);currentDossierId='';scheduleSave();renderView();};
   top.appendChild(del); v.appendChild(top);
-  v.appendChild(el('h1','page-h',D.titre||'Mission'));
+  v.appendChild(el('h1','page-h',D.titre||t('dossier_default_title')));
   const tabs=el('div','tabs');
-  const TABS=[['mission','Mission & site'],['regime','Régime'],['conformite','Conformité'],['sora','SORA'],
-    ['prevol','Check-list'],['journal','Journal'],['docs','Documents']];
+  const TABS=[['mission',t('tab_mission')],['regime',t('tab_regime')],['conformite',t('tab_conformite')],['sora',t('tab_sora')],
+    ['prevol',t('tab_prevol')],['journal',t('tab_journal')],['docs',t('tab_docs')]];
   TABS.forEach(([k,label])=>{const b=el('button','tab'+(dossierTab===k?' on':''),label);b.onclick=()=>{dossierTab=k;renderView();};tabs.appendChild(b);});
   v.appendChild(tabs);
   ({mission:tabMission,regime:tabRegime,conformite:tabConformite,sora:tabSora,prevol:tabPrevol,journal:tabJournal,docs:tabDocs}[dossierTab])(v,D);
 }
 
 function tabMission(v,D){
-  const c=card('Mission','Informations générales','Ces champs alimentent aussi les formulaires et la recommandation de régime.');
+  const c=card(t('mission_kick'),t('mission_title'),t('mission_desc'));
   const g=el('div','grid');
-  g.append(field('Intitulé',D,'titre',{after:()=>{}}),field('Client',D,'client'),
-    field('Date début',D,'dateDebut',{type:'date'}),field('Date fin',D,'dateFin',{type:'date'}),
-    field('Hauteur max (m)',D,'hauteurMax',{type:'number'}),
-    field('Type de vol',D,'typeVol',{type:'select',options:TYPEVOL}),
-    field('Environnement',D,'environnement',{type:'select',options:ENVOPTS}),
-    field('Distance aux tiers',D,'distanceTiers',{type:'select',options:DIST}));
-  c.appendChild(g); c.appendChild(field('Notes de mission',D,'notes',{type:'textarea',full:true})); v.appendChild(c);
+  g.append(field(t('f_intitule'),D,'titre',{after:()=>{}}),field(t('f_client'),D,'client'),
+    field(t('f_datedebut'),D,'dateDebut',{type:'date'}),field(t('f_datefin'),D,'dateFin',{type:'date'}),
+    field(t('f_hauteur'),D,'hauteurMax',{type:'number'}),
+    field(t('f_typevol'),D,'typeVol',{type:'select',options:optTypevol()}),
+    field(t('f_env'),D,'environnement',{type:'select',options:optEnv()}),
+    field(t('f_dist'),D,'distanceTiers',{type:'select',options:optDist()}));
+  c.appendChild(g); c.appendChild(field(t('f_notes_mission'),D,'notes',{type:'textarea',full:true})); v.appendChild(c);
 
-  const ac=card('Appareil','Aéronef utilisé','Choisissez un modèle DJI : dimension, vitesse et masse se remplissent seules.');
-  const opts=[['','— Choisir un modèle DJI / saisie manuelle —']]; let lastCat='';
+  const ac=card(t('appareil_kick'),t('appareil_title'),t('appareil_desc'));
+  const opts=[['',t('opt_choose_dji')]]; let lastCat='';
   dronesDB.all.forEach(d=>{opts.push([d.key,(d.cat!==lastCat?'【'+d.cat+'】 ':'')+'DJI '+d.modele]);lastCat=d.cat;});
-  opts.push(['manuel','✎ Saisie manuelle (autre marque)']);
-  ac.appendChild(field('Modèle',D.appareil,'key',{type:'select',options:opts,after:()=>applyModel(D)}));
+  opts.push(['manuel',t('opt_manual')]);
+  ac.appendChild(field(t('f_modele'),D.appareil,'key',{type:'select',options:opts,after:()=>applyModel(D)}));
   const isDji=!!dronesDB.all.find(d=>d.key===D.appareil.key);
   const g2=el('div','grid3');
-  g2.append(field('Marque',D.appareil,'marque',{readonly:isDji}),field('Modèle',D.appareil,'modele',{readonly:isDji}),
-    field('Classe C',D,'classeC',{type:'select',options:CLASSES}),
-    field('Dimension (m)',D.grc,'dim',{readonly:isDji}),field('Vitesse max (m/s)',D.grc,'vit',{readonly:isDji}),
-    field('Masse (g)',D.appareil,'masse',{readonly:isDji}),field('N° de série',D.appareil,'serie',{full:true}));
+  g2.append(field(t('f_marque'),D.appareil,'marque',{readonly:isDji}),field(t('f_modele'),D.appareil,'modele',{readonly:isDji}),
+    field(t('f_classe'),D,'classeC',{type:'select',options:CLASSES}),
+    field(t('f_dim'),D.grc,'dim',{readonly:isDji}),field(t('f_vitmax'),D.grc,'vit',{readonly:isDji}),
+    field(t('f_masse'),D.appareil,'masse',{readonly:isDji}),field(t('f_serie'),D.appareil,'serie',{full:true}));
   ac.appendChild(g2); v.appendChild(ac);
 
-  const mc=card('Site','Repérage & météo','Localisez par adresse ou sur la carte ; relevez la météo par code OACI.');
+  const mc=card(t('site_kick'),t('site_title'),t('site_desc'));
   const g3=el('div','grid');
-  g3.append(field('Adresse',D,'siteAdresse'),field('Ville',D,'siteVille'),
-    field('Code postal',D,'siteCp'),field('Code OACI (météo)',D,'icao'),
-    field('Latitude',D,'lat'),field('Longitude',D,'lon'));
+  g3.append(field(t('f_adresse'),D,'siteAdresse'),field(t('f_ville'),D,'siteVille'),
+    field(t('f_cp'),D,'siteCp'),field(t('f_icao'),D,'icao'),
+    field(t('f_lat'),D,'lat'),field(t('f_lon'),D,'lon'));
   mc.appendChild(g3);
   const bar=el('div','row-actions');
-  const geo=el('button','btn','📍 Localiser l’adresse');geo.onclick=()=>geocodeSite(D);
-  const map=el('button','btn','🗺 Carte / pointer');map.onclick=()=>openMap(D);
-  const met=el('button','btn','🌦 Relever la météo');met.onclick=()=>releveMeteo(D);
+  const geo=el('button','btn',t('btn_geoloc'));geo.onclick=()=>geocodeSite(D);
+  const map=el('button','btn',t('btn_map'));map.onclick=()=>openMap(D);
+  const met=el('button','btn',t('btn_weather'));met.onclick=()=>releveMeteo(D);
   bar.append(geo,map,met); mc.appendChild(bar);
   if(D.meteo&&D.meteo.metar){mc.appendChild(el('div','note','METAR : '+D.meteo.metar));}
   v.appendChild(mc);
@@ -395,20 +404,20 @@ function applyModel(D){
 }
 async function geocodeSite(D){
   const q=[D.siteAdresse,D.siteCp,D.siteVille].filter(Boolean).join(' ');
-  if(!q){alert('Renseignez l’adresse.');return;}
+  if(!q){alert(t('addr_missing'));return;}
   try{const r=await apiGet('/api/geocode?q='+encodeURIComponent(q));D.lat=r.lat.toFixed(6);D.lon=r.lon.toFixed(6);if(!D.lieu)D.lieu=r.label;scheduleSave();renderView();}
-  catch(e){alert('Localisation impossible : '+(e.message||e));}
+  catch(e){alert(t('geo_fail',{e:(e.message||e)}));}
 }
 async function releveMeteo(D){
-  if(!D.icao){alert('Renseignez le code OACI (ex. LFRS).');return;}
+  if(!D.icao){alert(t('icao_missing'));return;}
   try{const r=await apiGet('/api/weather?icao='+encodeURIComponent(D.icao));D.meteo=r;scheduleSave();renderView();
-    if(r.error)alert('Météo indisponible : '+r.error);}
-  catch(e){alert('Météo indisponible : '+(e.message||e));}
+    if(r.error)alert(t('weather_fail',{e:r.error}));}
+  catch(e){alert(t('weather_fail',{e:(e.message||e)}));}
 }
 function openMap(D){
   const ov=el('div','mapmodal');const box=el('div','mapbox');
-  const head=el('div','pdfhead');head.appendChild(el('b',null,'Pointer le site de vol'));
-  const close=el('button','btn sm primary','Fermer');head.appendChild(close);
+  const head=el('div','pdfhead');head.appendChild(el('b',null,t('map_title')));
+  const close=el('button','btn sm primary',t('close'));head.appendChild(close);
   const md=el('div');md.id='map';box.append(head,md);ov.appendChild(box);document.body.appendChild(ov);
   const lat=parseFloat(D.lat)||46.7,lon=parseFloat(D.lon)||-1.4;
   const m=L.map('map').setView([lat,lon],D.lat?14:6);
@@ -421,131 +430,135 @@ function openMap(D){
 }
 
 function tabRegime(v,D){
-  const c=card('Régime d’exploitation','Quel cadre pour cette mission ?','L’assistant propose le régime le plus adapté. Vous gardez le choix.');
-  const box=el('div','result');box.innerHTML='<div><div class="big">…</div><div class="lbl">Recommandé</div></div>';
+  const c=card(t('regime_kick'),t('regime_title'),t('regime_desc'));
+  const box=el('div','result');box.innerHTML='<div><div class="big">…</div><div class="lbl">'+t('recommended')+'</div></div>';
   c.appendChild(box); v.appendChild(c);
   apiSend('/api/regime','POST',D).then(rec=>{
     box.innerHTML='';
-    const l=el('div');l.innerHTML='<div class="big">'+(rec.short||'—')+'</div><div class="lbl">Recommandé</div>';
+    const l=el('div');l.innerHTML='<div class="big">'+(rec.short||'—')+'</div><div class="lbl">'+t('recommended')+'</div>';
     const r=el('div');r.style.cssText='border-left:1px solid #cfe0f6;padding-left:14px;flex:1';
-    r.innerHTML='<b>'+rec.label+(rec.sub?' — '+rec.sub:'')+'</b><div class="note">'+rec.why+'</div>';
+    r.appendChild(el('b',null,t('rl_'+rec.regime)+(rec.sub?' — '+rec.sub:'')));
+    r.appendChild(el('div','note',rec.why));
     box.append(l,r);
     if(rec.missing)c.appendChild(el('div','warn',rec.missing));
     const choose=el('div','row-actions');
-    [['open','Ouverte'],['sts','STS'],['pdra','PDRA'],['sora','SORA']].forEach(([k,lab])=>{
-      const b=el('button','btn'+(D.regime===k?' primary':''),lab+(rec.regime===k?' ✓ conseillé':''));
+    [['open',t('regime_open')],['sts','STS'],['pdra','PDRA'],['sora','SORA']].forEach(([k,lab])=>{
+      const b=el('button','btn'+(D.regime===k?' primary':''),lab+(rec.regime===k?t('advised_suffix'):''));
       b.onclick=()=>{D.regime=k;if(k==='open'&&rec.sub)D.sousCategorie=rec.sub;scheduleSave();renderView();};choose.appendChild(b);
     });
-    c.appendChild(el('div','note','Régime retenu :'));c.appendChild(choose);
-    if(D.regime==='open'){c.appendChild(field('Sous-catégorie',D,'sousCategorie',{type:'select',options:[['','—'],['A1','A1'],['A2','A2'],['A3','A3']]}));}
-    if(D.regime==='pdra'){c.appendChild(field('PDRA visé',D,'pdra',{type:'select',options:[['','—'],['S01','S01'],['S02','S02'],['G01','G01'],['G02','G02'],['G03','G03']]}));}
+    c.appendChild(el('div','note',t('regime_kept')));c.appendChild(choose);
+    if(D.regime==='open'){c.appendChild(field(t('f_souscat'),D,'sousCategorie',{type:'select',options:optSouscat()}));}
+    if(D.regime==='pdra'){c.appendChild(field(t('f_pdra'),D,'pdra',{type:'select',options:optPdra()}));}
   });
 }
 function tabConformite(v,D){
-  if(D.regime==='sora'){ v.appendChild(card('SORA',null,'La conformité SORA se fait dans l’onglet SORA.')); return; }
+  if(D.regime==='sora'){ v.appendChild(card('SORA',null,t('conf_sora_note'))); return; }
   if(D.regime==='open'){
-    const c=card('Catégorie ouverte','Contrôle de conformité','Vérifie la cohérence sous-catégorie / classe / conditions.');
+    const c=card(t('conf_open_kick'),t('conf_open_title'),t('conf_open_desc'));
     v.appendChild(c);
     apiSend('/api/regime/open','POST',D).then(res=>{
-      c.appendChild(badge(res.ok?'b-green':'b-orange',res.ok?'Conforme':'Points à vérifier'));
+      c.appendChild(badge(res.ok?'b-green':'b-orange',res.ok?t('conf_ok'):t('conf_ko')));
       res.items.forEach(it=>{const r=el('div','ck');r.appendChild(el('span',null,it.ok?'✅':'⚠️'));r.appendChild(el('span',null,it.text));c.appendChild(r);});
     });
     return;
   }
   const lbl={sts:'STS',pdra:'PDRA'}[D.regime]||'—';
-  const c=card('Catégorie spécifique — '+lbl,'Rappels','La conformité exacte se lit sur la fiche officielle du scénario retenu.');
+  const c=card(t('conf_spec_kick',{x:lbl}),t('conf_spec_title'),t('conf_spec_desc'));
   c.appendChild(el('div','note',D.regime==='sts'
     ? 'STS-01 : VLOS, drone C5, zone au sol contrôlée. STS-02 : BVLOS avec observateurs, drone C6, zone peu peuplée. Déclaration à la DGAC.'
     : 'PDRA : scénario de risque prédéfini (méthode SORA pré-instruite). Demande d’autorisation d’exploitation.'));
   v.appendChild(c);
 }
 function tabSora(v,D){
-  const g=card('Risque au sol — GRC','Étapes 1-3','Dimension et vitesse viennent de l’appareil ; densité + atténuations donnent le GRC.');
+  const g=card(t('sora_grc_kick'),t('sora_grc_steps'),t('sora_grc_desc'));
   const gg=el('div','grid');
-  gg.append(field('Dimension (m)',D.grc,'dim'),field('Vitesse (m/s)',D.grc,'vit'),
-    field('Densité population',D.grc,'densite',{type:'select',options:DENSITE}),
-    field('M1(A) refuge',D.grc,'m1a',{type:'select',options:[['none','Absent/Faible'],['low','Faible'],['med','Moyenne']]}),
-    field('M1(B) restrictions',D.grc,'m1b',{type:'select',options:[['none','Absent'],['med','Moyenne'],['high','Haute']]}),
-    field('M2 impact',D.grc,'m2',{type:'select',options:[['none','Absent/Faible'],['med','Moyenne'],['high','Haute']]}));
+  gg.append(field(t('f_dim'),D.grc,'dim'),field(t('f_vit'),D.grc,'vit'),
+    field(t('f_densite'),D.grc,'densite',{type:'select',options:optDensite()}),
+    field(t('f_m1a'),D.grc,'m1a',{type:'select',options:optMitA()}),
+    field(t('f_m1b'),D.grc,'m1b',{type:'select',options:optMitB()}),
+    field(t('f_m2'),D.grc,'m2',{type:'select',options:optMit2()}));
   g.appendChild(gg); v.appendChild(g);
-  const a=card('Risque air — ARC','Étapes 4-6','Arbre de décision de l’espace aérien.');
+  const a=card(t('sora_arc_kick'),t('sora_arc_steps'),t('sora_arc_desc'));
   const ag=el('div','grid');
-  ag.append(field('Espace atypique/ségrégué',D.arc,'atypical',{type:'select',options:YN}),
-    field('> FL600',D.arc,'fl600',{type:'select',options:YN}),
-    field('Proche aérodrome',D.arc,'airport',{type:'select',options:YN}),
-    field('… en zone à trafic',D.arc,'airportClass',{type:'select',options:YN}),
-    field('> 500 ft AGL',D.arc,'above500',{type:'select',options:YN}),
-    field('Zone urbaine',D.arc,'urban',{type:'select',options:YN}),
-    field('ARC final (si réduction)',D.arc,'residual',{type:'select',options:ARC_RES}));
+  ag.append(field(t('f_atypical'),D.arc,'atypical',{type:'select',options:optYN()}),
+    field('> FL600',D.arc,'fl600',{type:'select',options:optYN()}),
+    field(t('f_airport'),D.arc,'airport',{type:'select',options:optYN()}),
+    field(t('f_airportclass'),D.arc,'airportClass',{type:'select',options:optYN()}),
+    field('> 500 ft AGL',D.arc,'above500',{type:'select',options:optYN()}),
+    field(t('f_urban'),D.arc,'urban',{type:'select',options:optYN()}),
+    field(t('f_arcres'),D.arc,'residual',{type:'select',options:optArcRes()}));
   a.appendChild(ag); v.appendChild(a);
-  const res=card('Résultat','SAIL & OSO',''); const out=el('div');res.appendChild(out);v.appendChild(res);
-  const btn=el('button','btn primary','Calculer le SORA');btn.onclick=()=>runSora(D,out);res.insertBefore(btn,out);
+  const res=card(t('sora_res_kick'),t('sora_res_title'),''); const out=el('div');res.appendChild(out);v.appendChild(res);
+  const btn=el('button','btn primary',t('btn_calc_sora'));btn.onclick=()=>runSora(D,out);res.insertBefore(btn,out);
   runSora(D,out);
 }
 async function runSora(D,out){
   const r=await apiSend('/api/sora','POST',{grc:D.grc,arc:D.arc}); out.innerHTML='';
-  if(!r.valid){out.appendChild(el('div','warn','Renseignez dimension, vitesse et densité pour le calcul du GRC.'));}
+  if(!r.valid){out.appendChild(el('div','warn',t('sora_invalid')));}
   const box=el('div','result');
   box.innerHTML='<div><div class="big">'+(r.sail||'—')+'</div><div class="lbl">SAIL</div></div>'+
     '<div style="border-left:1px solid #cfe0f6;padding-left:14px;flex:1"><b>iGRC '+(r.igrc??'—')+' → GRC '+(r.grc??'—')+'</b>'+
     '<div class="note">ARC '+(r.arcInitial||'—').toUpperCase()+' → '+(r.arcResidual||'—').toUpperCase()+'</div></div>';
   out.appendChild(box);
-  if(r.cumulConflict)out.appendChild(el('div','warn','M1(A) moyenne et M1(B) ne sont pas cumulables : vérifiez la justification.'));
+  if(r.cumulConflict)out.appendChild(el('div','warn',t('sora_cumul')));
   if(r.osoReq&&r.osoReq.length){
-    const t=el('table');t.style.cssText='width:100%;border-collapse:collapse;margin-top:10px;font-size:12.5px';
+    const tbl=el('table');tbl.style.cssText='width:100%;border-collapse:collapse;margin-top:10px;font-size:12.5px';
+    const hr=el('tr');
+    [['OSO',70],[t('oso_col_obj'),0],[t('oso_col_rob'),120]].forEach(([h,w])=>{const th=el('th',null,h);th.style.cssText='text-align:left;padding:4px 6px;border-bottom:1px solid var(--bord);color:var(--gris);font-weight:700'+(w?';width:'+w+'px':'');hr.appendChild(th);});
+    tbl.appendChild(hr);
+    const RT={'L':'oso_low','M':'oso_med','H':'oso_high','-':'oso_none'};
+    const RC={'L':'b-yellow','M':'b-orange','H':'b-red','-':'b-grey'};
     r.osoReq.forEach(o=>{const tr=el('tr');
       const td1=el('td',null,'OSO '+o.id);td1.style.cssText='padding:4px 6px;border-bottom:1px solid var(--bord);width:70px';
       const td2=el('td',null,o.t);td2.style.cssText='padding:4px 6px;border-bottom:1px solid var(--bord)';
       const td3=el('td');td3.style.cssText='padding:4px 6px;border-bottom:1px solid var(--bord);width:120px';
-      const cls={'L':'b-yellow','M':'b-orange','H':'b-red','-':'b-grey'}[o.lvl];
-      const txt={'L':'Faible','M':'Moyen','H':'Haut','-':'Non requis'}[o.lvl];
-      td3.appendChild(badge(cls,txt));tr.append(td1,td2,td3);t.appendChild(tr);});
-    out.appendChild(t);
+      td3.appendChild(badge(RC[o.lvl],t(RT[o.lvl])));tr.append(td1,td2,td3);tbl.appendChild(tr);});
+    out.appendChild(tbl);
   }
 }
 function tabPrevol(v,D){
-  const c=card('Préparation','Check-list pré-vol','À cocher avant décollage. Repris dans le dossier PDF.');
+  const c=card(t('prevol_kick'),t('prevol_title'),t('prevol_desc'));
   PREVOL.forEach(item=>{const r=el('label','ck');const cb=el('input');cb.type='checkbox';cb.checked=!!D.prevol[item];
     cb.onchange=()=>{D.prevol[item]=cb.checked;scheduleSave();};r.append(cb,el('span',null,item));c.appendChild(r);});
   v.appendChild(c);
 }
 function tabJournal(v,D){
-  const c=card('Après-vol','Journal de vol','Une ligne par session : horaires, nombre de vols, incidents.');
+  const c=card(t('journal_kick'),t('journal_title'),t('journal_desc'));
   (D.journal||[]).forEach((s,i)=>{const row=el('div','row-actions');
     const dt=el('input');dt.type='date';dt.value=s.date||'';dt.oninput=()=>{s.date=dt.value;scheduleSave();};
     const h1=el('input');h1.type='time';h1.value=s.debut||'';h1.oninput=()=>{s.debut=h1.value;scheduleSave();};
     const h2=el('input');h2.type='time';h2.value=s.fin||'';h2.oninput=()=>{s.fin=h2.value;scheduleSave();};
-    const nb=el('input');nb.type='number';nb.placeholder='vols';nb.style.width='70px';nb.value=s.nb||'';nb.oninput=()=>{s.nb=nb.value;scheduleSave();};
-    const inc=el('input');inc.placeholder='Incidents';inc.style.flex='1';inc.value=s.incidents||'';inc.oninput=()=>{s.incidents=inc.value;scheduleSave();};
+    const nb=el('input');nb.type='number';nb.placeholder=t('journal_ph_flights');nb.style.width='70px';nb.value=s.nb||'';nb.oninput=()=>{s.nb=nb.value;scheduleSave();};
+    const inc=el('input');inc.placeholder=t('journal_ph_incidents');inc.style.flex='1';inc.value=s.incidents||'';inc.oninput=()=>{s.incidents=inc.value;scheduleSave();};
     const rm=el('button','btn danger sm','−');rm.onclick=()=>{D.journal.splice(i,1);scheduleSave();renderView();};
     row.append(dt,h1,h2,nb,inc,rm);c.appendChild(row);});
-  const add=el('button','btn sm','+ Session');add.onclick=()=>{D.journal.push({date:new Date().toISOString().slice(0,10),debut:'',fin:'',nb:'',incidents:''});scheduleSave();renderView();};
+  const add=el('button','btn sm',t('btn_add_session'));add.onclick=()=>{D.journal.push({date:new Date().toISOString().slice(0,10),debut:'',fin:'',nb:'',incidents:''});scheduleSave();renderView();};
   c.appendChild(add); v.appendChild(c);
 }
 function tabDocs(v,D){
-  const c=card('Documents','Générer les PDF','Dossier de vol, rapport client, et formulaires pré-remplis.');
+  const c=card(t('doc_kick'),t('doc_title'),t('doc_desc'));
   const bar=el('div','row-actions');
-  bar.appendChild(pdfBtn('📄 Dossier de vol','/api/report/dossier',{dossierId:D.id}));
-  bar.appendChild(pdfBtn('🧾 Rapport client','/api/report/rapport',{dossierId:D.id}));
+  bar.appendChild(pdfBtn(t('btn_dossier_pdf'),'/api/report/dossier',{dossierId:D.id}));
+  bar.appendChild(pdfBtn(t('btn_rapport_pdf'),'/api/report/rapport',{dossierId:D.id}));
   c.appendChild(bar);
   const bar2=el('div','row-actions');
-  bar2.appendChild(pdfBtn('Cerfa 15476','/api/form/cerfa',{dossierId:D.id}));
-  bar2.appendChild(pdfBtn('Dérogation','/api/form/derog',{dossierId:D.id}));
-  bar2.appendChild(pdfBtn('Lettre AOT','/api/form/aot',{dossierId:D.id}));
-  c.appendChild(el('div','note','Formulaires officiels :'));c.appendChild(bar2);
+  bar2.appendChild(pdfBtn(t('btn_cerfa'),'/api/form/cerfa',{dossierId:D.id}));
+  bar2.appendChild(pdfBtn(t('btn_derog'),'/api/form/derog',{dossierId:D.id}));
+  bar2.appendChild(pdfBtn(t('btn_aot'),'/api/form/aot',{dossierId:D.id}));
+  c.appendChild(el('div','note',t('forms_official')));c.appendChild(bar2);
   v.appendChild(c);
 }
 function pdfBtn(label,path,body){
   const b=el('button','btn primary',label);
-  b.onclick=async()=>{try{const blob=await apiPdf(path,body);openPdf(blob,label);}catch(e){alert('Génération impossible : '+(e.message||e));}};
+  b.onclick=async()=>{try{const blob=await apiPdf(path,body);openPdf(blob,label);}catch(e){alert(t('gen_fail',{e:(e.message||e)}));}};
   return b;
 }
 function openPdf(blob,title){
   const url=URL.createObjectURL(blob);
   const ov=el('div','pdfmodal');const box=el('div','pdfbox');
   const head=el('div','pdfhead');head.appendChild(el('b',null,title));
-  const dl=el('a','btn sm','Enregistrer');dl.href=url;dl.download=(title.replace(/[^\w]+/g,'_')||'document')+'.pdf';head.appendChild(dl);
-  const close=el('button','btn sm primary','Fermer');head.appendChild(close);
+  const dl=el('a','btn sm',t('pdf_save'));dl.href=url;dl.download=(title.replace(/[^\w]+/g,'_')||'document')+'.pdf';head.appendChild(dl);
+  const close=el('button','btn sm primary',t('close'));head.appendChild(close);
   const fr=el('iframe','pdfframe');fr.src=url;box.append(head,fr);ov.appendChild(box);document.body.appendChild(ov);
   close.onclick=()=>{URL.revokeObjectURL(url);document.body.removeChild(ov);};
 }
@@ -590,16 +603,16 @@ function initCarte(search,go,coord){
   async function jump(){ const q=search.value.trim(); if(!q)return;
     try{ const r=await apiGet('/api/geocode?q='+encodeURIComponent(q)); map.setView([r.lat,r.lon],14);
       if(mk)mk.setLatLng([r.lat,r.lon]); else mk=L.marker([r.lat,r.lon]).addTo(map);
-    }catch(e){ alert('Adresse introuvable.'); } }
+    }catch(e){ alert(t('addr_notfound')); } }
   go.onclick=jump; search.addEventListener('keydown',e=>{ if(e.key==='Enter')jump(); });
   setTimeout(()=>map.invalidateSize(),150);
 }
 
 /* ---------- Check-list de référence (consultable) ---------- */
 function viewChecklistRef(v){
-  v.appendChild(el('h1','page-h','Check-list pré-vol (référence)'));
-  v.appendChild(el('p','page-sub','Consultable sans monter de dossier — utile en préparation ou en contrôle.'));
-  const c=card('Terrain','Points à vérifier avant décollage','');
+  v.appendChild(el('h1','page-h',t('nav_checklist')));
+  v.appendChild(el('p','page-sub',t('checklist_sub')));
+  const c=card(t('checklistref_kick'),t('checklistref_title'),'');
   PREVOL.forEach(i=>{const r=el('div','ck');r.append(el('span',null,'☐'),el('span',null,i));c.appendChild(r);});
   v.appendChild(c);
 }
@@ -607,46 +620,46 @@ function viewChecklistRef(v){
 /* ---------- Documents / MANEX / sauvegarde ---------- */
 function viewDocs(v){
   v.appendChild(el('h1','page-h',t('nav_docs')));
-  v.appendChild(el('p','page-sub','Importez vos justificatifs (MANEX, assurance, attestations) pour les consulter et les présenter en contrôle.'));
-  const {card:c,body:cb}=collCard('docs-justif','Justificatifs','Vos documents','',true);
-  const imp=el('button','btn primary','⬆ Importer un document');
+  v.appendChild(el('p','page-sub',t('docs_sub')));
+  const {card:c,body:cb}=collCard('docs-justif',t('docs_justif_kick'),t('docs_justif_title'),'',true);
+  const imp=el('button','btn primary',t('btn_import_doc'));
   imp.onclick=()=>{const i=document.createElement('input');i.type='file';i.onchange=()=>uploadDoc(i.files[0]);i.click();};
   cb.appendChild(imp); const list=el('div');list.id='docslist';cb.appendChild(list);v.appendChild(c);loadDocs();
 
-  const {card:mc,body:mb}=collCard('docs-manex','MANEX','Générer une trame de MANEX','Manuel pré-rempli depuis votre référentiel, plan A-E. À relire et adapter.',false);
-  mb.appendChild(pdfBtn('📘 Générer la trame MANEX','/api/report/manex',{}));v.appendChild(mc);
+  const {card:mc,body:mb}=collCard('docs-manex',t('manex_kick'),t('manex_title'),t('manex_desc'),false);
+  mb.appendChild(pdfBtn(t('btn_gen_manex'),'/api/report/manex',{}));v.appendChild(mc);
 
-  const {card:sb,body:sd}=collCard('docs-save','Sécurité','Sauvegarde des données','Exportez / réimportez toutes vos données (JSON).',false);
+  const {card:sb,body:sd}=collCard('docs-save',t('save_kick'),t('save_title'),t('save_desc'),false);
   const bar=el('div','row-actions');
-  const ex=el('button','btn primary','💾 Exporter mes données');ex.onclick=()=>{window.location='/api/backup';};
-  const im=el('button','btn','📥 Importer des données');im.onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=()=>restoreBackup(i.files[0]);i.click();};
-  bar.append(ex,im);sd.appendChild(bar);sd.appendChild(el('div','note','L’import remplace les données actuelles.'));v.appendChild(sb);
+  const ex=el('button','btn primary',t('btn_export_data'));ex.onclick=()=>{window.location='/api/backup';};
+  const im=el('button','btn',t('btn_import_data'));im.onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=()=>restoreBackup(i.files[0]);i.click();};
+  bar.append(ex,im);sd.appendChild(bar);sd.appendChild(el('div','note',t('import_replace_note')));v.appendChild(sb);
 }
 async function loadDocs(){
   const list=document.getElementById('docslist');if(!list)return;list.innerHTML='';
   let docs=[];try{docs=await apiGet('/api/docs');}catch(e){}
-  if(!docs.length){list.appendChild(el('div','note','Aucun document importé.'));return;}
+  if(!docs.length){list.appendChild(el('div','note',t('docs_none')));return;}
   docs.forEach(d=>{const row=el('div','row-actions');
     const nm=el('div',null,d.name);nm.style.cssText='flex:1;font-size:13.5px';
     row.appendChild(nm);row.appendChild(badge('b-grey',fmtSize(d.size)));
-    const lire=el('button','btn sm primary','Lire');lire.onclick=()=>window.open('/api/docs/'+encodeURIComponent(d.name),'_blank');
-    const exp=el('a','btn sm');exp.textContent='Exporter';exp.href='/api/docs/'+encodeURIComponent(d.name);exp.download=d.name;
-    const del=el('button','btn danger sm','🗑');del.onclick=async()=>{if(!confirm('Supprimer '+d.name+' ?'))return;await fetch('/api/docs/'+encodeURIComponent(d.name),{method:'DELETE'});loadDocs();};
+    const lire=el('button','btn sm primary',t('btn_read'));lire.onclick=()=>window.open('/api/docs/'+encodeURIComponent(d.name),'_blank');
+    const exp=el('a','btn sm');exp.textContent=t('btn_export');exp.href='/api/docs/'+encodeURIComponent(d.name);exp.download=d.name;
+    const del=el('button','btn danger sm','🗑');del.onclick=async()=>{if(!confirm(t('confirm_del_doc',{name:d.name})))return;await fetch('/api/docs/'+encodeURIComponent(d.name),{method:'DELETE'});loadDocs();};
     row.append(lire,exp,del);list.appendChild(row);});
 }
 function fmtSize(n){if(n<1024)return n+' o';if(n<1048576)return(n/1024).toFixed(0)+' Ko';return(n/1048576).toFixed(1)+' Mo';}
 async function uploadDoc(file){if(!file)return;const fd=new FormData();fd.append('file',file);
-  try{await fetch('/api/docs',{method:'POST',body:fd});loadDocs();}catch(e){alert('Import impossible : '+e);}}
-async function restoreBackup(file){if(!file)return;const txt=await file.text();let data;try{data=JSON.parse(txt);}catch(e){alert('JSON invalide.');return;}
-  if(!confirm('Remplacer les données actuelles ?'))return;
+  try{await fetch('/api/docs',{method:'POST',body:fd});loadDocs();}catch(e){alert(t('import_fail',{e:e}));}}
+async function restoreBackup(file){if(!file)return;const txt=await file.text();let data;try{data=JSON.parse(txt);}catch(e){alert(t('json_invalid'));return;}
+  if(!confirm(t('confirm_restore')))return;
   await apiSend('/api/backup','POST',data);store=await apiGet('/api/store');current='exploitant';renderNav();renderView();}
 
 /* ---------- Liens ---------- */
 function viewLiens(v){
   v.appendChild(el('h1','page-h',t('nav_links')));
-  v.appendChild(el('p','page-sub','Ressources officielles de préparation de vol et appels d’offres.'));
-  v.appendChild(linkCard('l-utiles','Ressources','Liens utiles','',LINKS,true));
-  v.appendChild(linkCard('l-marches','Business','Marchés publics & appels d’offres','',MARCHES,false));
+  v.appendChild(el('p','page-sub',t('liens_sub')));
+  v.appendChild(linkCard('l-utiles',t('liens_res_kick'),t('liens_res_title'),'',LINKS,true));
+  v.appendChild(linkCard('l-marches',t('liens_biz_kick'),t('liens_biz_title'),'',MARCHES,false));
 }
 function linkCard(id,kick,title,desc,items,defOpen){
   const {card:c,body:b}=collCard(id,kick,title,desc,defOpen);
