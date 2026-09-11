@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .core import (drones, forms, geocode, i18n, models, regimes, reports,
-                   sora, storage, updater, weather)
+                   shortcuts, sora, storage, updater, weather)
 from .core.version import RELEASES_URL, REPO_URL, __version__
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -48,6 +48,25 @@ def list_drones():
 @app.get("/api/update")
 def check_update():
     return updater.check()
+
+
+@app.get("/api/firstrun")
+def firstrun():
+    # L'interface propose au premier lancement de créer des raccourcis.
+    return {"first": storage.first_run(), "can_shortcuts": shortcuts.can_create()}
+
+
+@app.post("/api/setup")
+async def setup(request: Request):
+    body = await request.json()
+    created = []
+    if body.get("shortcuts"):
+        try:
+            created = shortcuts.create_windows_shortcuts().get("created", [])
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, str(e))
+    storage.mark_setup_done()
+    return {"ok": True, "created": created}
 
 
 @app.post("/api/update/apply")

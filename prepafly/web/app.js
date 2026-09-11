@@ -131,7 +131,26 @@ async function unlock(){
   store=await apiGet('/api/store');
   dronesDB=await apiGet('/api/drones');
   try{ strings=await apiGet('/api/i18n/'+lang); }catch(e){ strings={}; }
-  renderNav(); renderView(); checkUpdate();
+  renderNav(); renderView(); checkUpdate(); firstRun();
+}
+/* Premier lancement : propose d'ajouter les raccourcis (Bureau + menu Démarrer). */
+async function firstRun(){
+  let f; try{ f=await apiGet('/api/firstrun'); }catch(e){ return; }
+  if(!f.first || !f.can_shortcuts) return;
+  const ov=el('div','pdfmodal');
+  const box=el('div','card'); box.style.cssText='max-width:440px;text-align:center;padding:26px';
+  box.innerHTML='<div style="font-size:40px">🚁</div>';
+  box.appendChild(el('h2',null,t('setup_title')));
+  box.appendChild(el('div','desc',t('setup_msg')));
+  const row=el('div','row-actions'); row.style.justifyContent='center';
+  const yes=el('button','btn primary',t('setup_yes'));
+  const no=el('button','btn',t('setup_no'));
+  row.append(yes,no); box.appendChild(row); ov.appendChild(box); document.body.appendChild(ov);
+  const close=()=>{ try{document.body.removeChild(ov);}catch(e){} };
+  no.onclick=async()=>{ try{ await apiSend('/api/setup','POST',{shortcuts:false}); }catch(e){} close(); };
+  yes.onclick=async()=>{ yes.disabled=true; yes.textContent='…';
+    try{ const r=await apiSend('/api/setup','POST',{shortcuts:true}); close(); alert(t('setup_done',{where:(r.created||[]).join(', ')})); }
+    catch(e){ close(); alert('Création des raccourcis impossible : '+(e.message||e)); } };
 }
 async function checkUpdate(){
   try{ const u=await apiGet('/api/update'); const bar=document.getElementById('updbar');

@@ -12,13 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            artifact: PrepaFlyPy-windows.exe
-            binpath: dist/PrepaFlyPy.exe
-          - os: ubuntu-latest
-            artifact: PrepaFlyPy-linux
-            binpath: dist/PrepaFlyPy
+        os: [ windows-latest, ubuntu-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -43,17 +37,49 @@ jobs:
       - name: Construire l'exécutable
         run: pyinstaller prepafly.spec
 
-      - name: Renommer l'artefact
+      # --- Windows : exécutable portable + installateur Inno Setup ---
+      - name: Préparer l'exécutable portable (Windows)
+        if: matrix.os == 'windows-latest'
         shell: bash
         run: |
           mkdir -p out
-          cp "${{ matrix.binpath }}" "out/${{ matrix.artifact }}"
+          cp dist/PrepaFlyPy.exe out/PrepaFlyPy-windows.exe
 
-      - name: Publier dans la release
+      - name: Installer Inno Setup (Windows)
+        if: matrix.os == 'windows-latest'
+        run: choco install innosetup -y --no-progress
+
+      - name: Construire l'installateur (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" installer.iss
+
+      # --- Linux : exécutable ---
+      - name: Préparer l'exécutable (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p out
+          cp dist/PrepaFlyPy out/PrepaFlyPy-linux
+
+      - name: Publier dans la release (Windows)
+        if: matrix.os == 'windows-latest'
         uses: softprops/action-gh-release@v2
         with:
-          files: out/${{ matrix.artifact }}
+          files: |
+            out/PrepaFlyPy-windows.exe
+            installer_out/PrepaFlyPy-Setup.exe
           name: "PrepaFlyPy ${{ github.ref_name }}"
-          body: "Exécutables Windows / Linux de PrepaFlyPy ${{ github.ref_name }}."
+          body: "Installateur Windows (PrepaFlyPy-Setup.exe) recommandé. Exécutable portable Windows et Linux également fournis."
+          draft: false
+          prerelease: false
+
+      - name: Publier dans la release (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/PrepaFlyPy-linux
+          name: "PrepaFlyPy ${{ github.ref_name }}"
           draft: false
           prerelease: false

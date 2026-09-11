@@ -54,6 +54,24 @@ def docs_dir() -> Path:
     return d
 
 
+# --- Premier lancement (proposition de raccourcis) ---------------------------
+
+def _setup_marker() -> Path:
+    return root() / ".setup_done"
+
+
+def first_run() -> bool:
+    """Vrai tant que la proposition d'installation n'a pas été traitée."""
+    return not _setup_marker().exists()
+
+
+def mark_setup_done() -> None:
+    try:
+        _setup_marker().write_text("1", encoding="utf-8")
+    except OSError:
+        pass
+
+
 # --- Données -----------------------------------------------------------------
 
 def load_store() -> dict:
