@@ -2,19 +2,28 @@
 # Spec PyInstaller pour PrepaFlyPy.
 # Construit un exécutable autonome (fenêtre bureau) incluant l'interface web et
 # les gabarits de formulaires. Build : pyinstaller prepafly.spec
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_submodules
 
-datas = []
-datas += collect_data_files("prepafly", includes=["web/*"])
-# Gabarits de formulaires s'ils sont présents (sinon ignorés).
-try:
-    datas += [("forms", "forms")]
-except Exception:
-    pass
+# Fichiers de données embarqués (chemins relatifs a ce .spec = racine du projet).
+# On copie explicitement le dossier web (interface) et forms (gabarits) : plus
+# fiable que collect_data_files, qui manquait le dossier web.
+datas = [
+    ("prepafly/web", "prepafly/web"),
+    ("forms", "forms"),
+]
 
+# uvicorn est force en boucle asyncio + protocole h11 (voir desktop.py), mais on
+# embarque quand meme ses sous-modules par securite.
 hiddenimports = []
 hiddenimports += collect_submodules("uvicorn")
-hiddenimports += ["reportlab.graphics.barcode"]
+hiddenimports += [
+    "uvicorn.loops.asyncio",
+    "uvicorn.protocols.http.h11_impl",
+    "uvicorn.protocols.websockets.wsproto_impl",
+    "uvicorn.lifespan.on",
+    "h11",
+    "reportlab.graphics.barcode",
+]
 
 a = Analysis(
     ["run.py"],
