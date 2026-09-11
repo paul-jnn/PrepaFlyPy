@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import base64
 import io
+import os
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -46,6 +48,19 @@ def list_drones():
 @app.get("/api/update")
 def check_update():
     return updater.check()
+
+
+@app.post("/api/update/apply")
+def apply_update():
+    # Télécharge la nouvelle version et programme le remplacement de l'exe, puis
+    # arrête l'application 1 s plus tard pour libérer le fichier (le script de
+    # bascule relance ensuite). En dev (non figé), updater lève une erreur.
+    try:
+        updater.apply_update()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, str(e))
+    threading.Timer(1.0, lambda: os._exit(0)).start()
+    return {"ok": True}
 
 
 # --- Store (données) ----------------------------------------------------------

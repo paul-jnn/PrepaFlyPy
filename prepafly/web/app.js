@@ -22,6 +22,10 @@ let store=null, dronesDB=null, meta=null, strings={}, lang='fr';
 let current='exploitant', currentDossierId='', dossierTab='mission';
 let saveTimer=null, sectionOpen={}, pilotOpen={};
 
+/* Traduction : renvoie la chaîne de la langue courante, avec substitution {var}. */
+function t(k,vars){ let s=(strings&&strings[k])||k; if(vars){for(const kk in vars)s=s.split('{'+kk+'}').join(vars[kk]);} return s; }
+async function setLang(code){ if(code===lang)return; lang=code; try{ strings=await apiGet('/api/i18n/'+code); }catch(e){} renderNav(); renderView(); }
+
 /* ---------- Petits outils de rendu ---------- */
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
 function card(kick,title,desc){
@@ -131,41 +135,69 @@ async function unlock(){
 }
 async function checkUpdate(){
   try{ const u=await apiGet('/api/update'); const bar=document.getElementById('updbar');
-    if(u.update_available){ bar.className='updbar';
-      bar.innerHTML=''; bar.appendChild(el('span',null,'Mise à jour '+u.latest+' disponible.'));
-      const a=el('a','btn sm primary','Télécharger'); a.href=u.url; a.target='_blank'; bar.appendChild(a);
+    if(!u.update_available) return;
+    bar.className='updbar'; bar.innerHTML='';
+    bar.appendChild(el('span',null,t('update_available',{v:u.latest})));
+    if(u.can_auto){
+      const btn=el('button','btn sm primary',t('update_install'));
+      btn.onclick=()=>applyUpdate(btn,u.url);
+      bar.appendChild(btn);
+    } else {
+      const a=el('a','btn sm primary',t('update_download')); a.href=u.url; a.target='_blank'; bar.appendChild(a);
     }
   }catch(e){}
+}
+async function applyUpdate(btn,url){
+  btn.disabled=true; btn.textContent='Téléchargement…';
+  try{
+    await apiSend('/api/update/apply','POST',{});
+    btn.textContent='Redémarrage…';
+  }catch(e){
+    btn.disabled=false; btn.textContent=t('update_install');
+    if(url) window.open(url,'_blank');
+    alert('Mise à jour automatique impossible : '+(e.message||e)+'\nLa page de téléchargement a été ouverte.');
+  }
 }
 
 /* ---------- Navigation ---------- */
 const NAV=[
-  ['exploitant','👤 Exploitant'],['pilotes','🧑‍✈️ Télépilotes'],['dossiers','📁 Dossiers de vol'],
-  ['SEP','Consultation'],
-  ['checklist','✅ Check-list pré-vol'],['docs','📚 Documents / MANEX'],['liens','🔗 Liens & contacts'],
+  ['exploitant','👤','nav_exploitant'],
+  ['pilotes','🧑‍✈️','nav_pilotes'],
+  ['dossiers','📁','nav_dossiers'],
+  ['SEP','','section_consultation'],
+  ['carte','🗺','nav_carte'],
+  ['checklist','✅','nav_checklist'],
+  ['docs','📚','nav_docs'],
+  ['liens','🔗','nav_links'],
 ];
 function renderNav(){
   const s=document.getElementById('side'); s.innerHTML='';
-  s.appendChild(el('div','brand','🚁 PrepaFlyPy'));
-  NAV.forEach(([k,label])=>{
-    if(k==='SEP'){ s.appendChild(el('div','sep',label)); return; }
-    const a=el('a',(current===k?'on':''),label); a.href='#';
+  const brand=el('div','brand');
+  brand.innerHTML='<img src="/static/logo.png" alt="" style="width:24px;height:24px;border-radius:6px"> PrepaFlyPy';
+  s.appendChild(brand);
+  // Bascule de langue FR / EN.
+  const lg=el('div'); lg.style.cssText='display:flex;gap:6px;padding:2px 20px 10px';
+  [['fr','FR'],['en','EN']].forEach(([code,lab])=>{ const b=el('button','langbtn'+(lang===code?' on':''),lab); b.onclick=()=>setLang(code); lg.appendChild(b); });
+  s.appendChild(lg);
+  NAV.forEach(([k,ic,key])=>{
+    if(k==='SEP'){ s.appendChild(el('div','sep',t(key))); return; }
+    const a=el('a',(current===k?'on':''),ic+' '+t(key)); a.href='#';
     a.onclick=e=>{e.preventDefault(); current=k; currentDossierId=''; renderNav(); renderView();};
     s.appendChild(a);
   });
   const ss=el('div','savestate'); ss.id='saveState'; ss.textContent=''; s.appendChild(ss);
-  s.appendChild(el('div','foot','v'+(meta&&meta.version||'?')+' · '+(dronesDB?dronesDB.all.length:0)+' drones DJI'));
+  s.appendChild(el('div','foot','v'+(meta&&meta.version||'?')));
 }
 function renderView(){
   const v=document.getElementById('view'); v.innerHTML='';
   if(currentDossierId){ return viewDossier(v); }
-  ({exploitant:viewExploitant,pilotes:viewPilotes,dossiers:viewDossiers,
+  ({exploitant:viewExploitant,pilotes:viewPilotes,dossiers:viewDossiers,carte:viewCarte,
     checklist:viewChecklistRef,docs:viewDocs,liens:viewLiens}[current]||viewExploitant)(v);
 }
 
 /* ---------- Exploitant ---------- */
 function viewExploitant(v){
-  v.appendChild(el('h1','page-h','Exploitant'));
+  v.appendChild(el('h1','page-h',t('nav_exploitant')));
   v.appendChild(el('p','page-sub','Renseigné une fois, repris dans chaque dossier et document.'));
   const e=store.exploitant;
   const {card:c,body:cb}=collCard('exp-id','Référentiel','Identité de l’exploitant','Alimente le ConOps, les Cerfa et les rapports.');
@@ -197,7 +229,7 @@ function importLogo(file){
 
 /* ---------- Télépilotes (accordéon) ---------- */
 function viewPilotes(v){
-  v.appendChild(el('h1','page-h','Télépilotes'));
+  v.appendChild(el('h1','page-h',t('nav_pilotes')));
   v.appendChild(el('p','page-sub','Cliquez un nom pour dérouler sa fiche. Le référent alimente les formulaires.'));
   const add=el('button','btn primary','+ Ajouter un télépilote');
   add.onclick=()=>{store.pilotes.push({id:'p'+Math.random().toString(36).slice(2,10),prenom:'',nom:'',tel:'',mail:'',numTele:'',brevets:'',mentions:[],habilitations:[],notes:''});scheduleSave();renderView();};
@@ -253,7 +285,7 @@ function habStatus(d){ if(!d)return null; const t=new Date();t.setHours(0,0,0,0)
 
 /* ---------- Dossiers (liste) ---------- */
 function viewDossiers(v){
-  v.appendChild(el('h1','page-h','Dossiers de vol'));
+  v.appendChild(el('h1','page-h',t('nav_dossiers')));
   v.appendChild(el('p','page-sub','Une mission = un dossier (appareil, régime, analyse, check-list, journal, PDF).'));
   const add=el('button','btn primary','+ Nouveau dossier');
   add.onclick=()=>{const d=emptyDossier();d.titre='Nouvelle mission';d.date=new Date().toISOString().slice(0,10);store.dossiers.push(d);store.currentId=d.id;currentDossierId=d.id;dossierTab='mission';scheduleSave();renderView();};
@@ -499,6 +531,51 @@ function openPdf(blob,title){
   close.onclick=()=>{URL.revokeObjectURL(url);document.body.removeChild(ov);};
 }
 
+/* ---------- Carte & restrictions (consultation) ----------
+   Couches officielles Géoportail (data.geopf.fr, sans clé) : restrictions drone
+   (aéro), plan IGN, satellite ; plus OpenStreetMap qui affiche les noms de
+   communes. La couche restrictions est un calque semi-transparent posé au-dessus,
+   pour voir à la fois les zones et les villes (ce qui manque sur Flyby). */
+function geopfLayer(layer, fmt){
+  const url='https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0'
+    +'&LAYER='+layer+'&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}'
+    +'&FORMAT='+encodeURIComponent(fmt);
+  return L.tileLayer(url,{maxZoom:19,attribution:'© IGN / Géoportail',crossOrigin:true});
+}
+function viewCarte(v){
+  v.appendChild(el('h1','page-h',t('nav_carte')));
+  v.appendChild(el('p','page-sub',t('carte_sub')));
+  const bar=el('div','row-actions');
+  const search=el('input'); search.placeholder=t('carte_search');
+  search.style.cssText='flex:1;min-width:220px;padding:9px 11px;border:1px solid var(--bord);border-radius:9px;font-size:13.5px';
+  const go=el('button','btn primary',t('carte_go'));
+  bar.append(search,go); v.appendChild(bar);
+  const md=el('div'); md.id='bigmap';
+  md.style.cssText='height:70vh;min-height:420px;border:1px solid var(--bord);border-radius:12px;overflow:hidden';
+  v.appendChild(md);
+  const coord=el('div','note',t('carte_click')); v.appendChild(coord);
+  setTimeout(()=>initCarte(search,go,coord),60);
+}
+function initCarte(search,go,coord){
+  const osm=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
+  const plan=geopfLayer('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2','image/png');
+  const ortho=geopfLayer('ORTHOIMAGERY.ORTHOPHOTOS','image/jpeg');
+  const resto=geopfLayer('TRANSPORTS.DRONES.RESTRICTIONS','image/png'); resto.setOpacity(0.55);
+  const map=L.map('bigmap',{center:[46.7,-1.42],zoom:8,layers:[osm,resto]});
+  const bases={}; bases[t('layer_osm')]=osm; bases[t('layer_plan')]=plan; bases[t('layer_ortho')]=ortho;
+  const overlays={}; overlays[t('layer_resto')]=resto;
+  L.control.layers(bases,overlays,{collapsed:false}).addTo(map);
+  let mk=null;
+  map.on('click',e=>{ coord.textContent=e.latlng.lat.toFixed(5)+', '+e.latlng.lng.toFixed(5);
+    if(mk)mk.setLatLng(e.latlng); else mk=L.marker(e.latlng).addTo(map); });
+  async function jump(){ const q=search.value.trim(); if(!q)return;
+    try{ const r=await apiGet('/api/geocode?q='+encodeURIComponent(q)); map.setView([r.lat,r.lon],14);
+      if(mk)mk.setLatLng([r.lat,r.lon]); else mk=L.marker([r.lat,r.lon]).addTo(map);
+    }catch(e){ alert('Adresse introuvable.'); } }
+  go.onclick=jump; search.addEventListener('keydown',e=>{ if(e.key==='Enter')jump(); });
+  setTimeout(()=>map.invalidateSize(),150);
+}
+
 /* ---------- Check-list de référence (consultable) ---------- */
 function viewChecklistRef(v){
   v.appendChild(el('h1','page-h','Check-list pré-vol (référence)'));
@@ -510,7 +587,7 @@ function viewChecklistRef(v){
 
 /* ---------- Documents / MANEX / sauvegarde ---------- */
 function viewDocs(v){
-  v.appendChild(el('h1','page-h','Documents / MANEX'));
+  v.appendChild(el('h1','page-h',t('nav_docs')));
   v.appendChild(el('p','page-sub','Importez vos justificatifs (MANEX, assurance, attestations) pour les consulter et les présenter en contrôle.'));
   const {card:c,body:cb}=collCard('docs-justif','Justificatifs','Vos documents','',true);
   const imp=el('button','btn primary','⬆ Importer un document');
@@ -547,16 +624,10 @@ async function restoreBackup(file){if(!file)return;const txt=await file.text();l
 
 /* ---------- Liens ---------- */
 function viewLiens(v){
-  v.appendChild(el('h1','page-h','Liens & contacts'));
-  v.appendChild(el('p','page-sub','Ressources officielles, marchés publics et code source.'));
+  v.appendChild(el('h1','page-h',t('nav_links')));
+  v.appendChild(el('p','page-sub','Ressources officielles de préparation de vol et appels d’offres.'));
   v.appendChild(linkCard('l-utiles','Ressources','Liens utiles','',LINKS,true));
   v.appendChild(linkCard('l-marches','Business','Marchés publics & appels d’offres','',MARCHES,false));
-  const src=[
-    {ic:'💻',t:'Code source (GitHub)',u:(meta&&meta.repo)||'https://github.com/paul-jnn/PrepaFlyPy',d:'Dépôt public'},
-    {ic:'📦',t:'Versions',u:(meta&&meta.releases)||'https://github.com/paul-jnn/PrepaFlyPy/releases',d:'Téléchargements'},
-    {ic:'📖',t:'Dossier technique',u:((meta&&meta.repo)||'https://github.com/paul-jnn/PrepaFlyPy')+'/blob/main/docs/DOSSIER_TECHNIQUE.md',d:'Documentation'},
-  ];
-  v.appendChild(linkCard('l-source','Application','Code source & documentation','Application libre et ouverte.',src,false));
 }
 function linkCard(id,kick,title,desc,items,defOpen){
   const {card:c,body:b}=collCard(id,kick,title,desc,defOpen);

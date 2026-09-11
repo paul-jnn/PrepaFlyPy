@@ -45,6 +45,7 @@ exe = EXE(
     a.datas,
     [],
     name="PrepaFlyPy",
+    icon="assets/icon.ico",   # même icône que l'app Rust (Assistant Vol Drone)
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
