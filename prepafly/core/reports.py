@@ -15,10 +15,10 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import (Image, Paragraph, SimpleDocTemplate, Spacer, Table,
-                                TableStyle)
+from reportlab.platypus import (Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer,
+                                Table, TableStyle)
 
-from . import drones, regimes, sora as sora_mod
+from . import drones, regimes, regs, sora as sora_mod
 
 # --- Palette / styles ---------------------------------------------------------
 BLEU = colors.HexColor("#1b3a6b")
@@ -34,6 +34,50 @@ H2 = ParagraphStyle("H2", parent=_ss["Heading2"], textColor=BLEU2, fontSize=12, 
 BODY = ParagraphStyle("Body", parent=_ss["BodyText"], fontSize=9.5, leading=13, textColor=colors.HexColor("#222a35"))
 SMALL = ParagraphStyle("Small", parent=BODY, fontSize=8, textColor=GRIS)
 KICK = ParagraphStyle("Kick", parent=BODY, fontSize=8, textColor=BLEU2, spaceAfter=0)
+# Titres numérotés du dossier de vol (niveaux 1/2/3).
+H1N = ParagraphStyle("H1N", parent=_ss["Heading1"], textColor=BLEU, fontSize=16, spaceBefore=8, spaceAfter=8)
+H2N = ParagraphStyle("H2N", parent=_ss["Heading2"], textColor=colors.HexColor("#2a2f3a"), fontSize=12.5, spaceBefore=10, spaceAfter=4)
+H3N = ParagraphStyle("H3N", parent=_ss["Heading3"], textColor=GRIS, fontSize=10.5, spaceBefore=6, spaceAfter=3)
+COVERT = ParagraphStyle("CoverT", parent=_ss["Title"], textColor=BLEU, fontSize=26, alignment=1, spaceAfter=10)
+COVERS = ParagraphStyle("CoverS", parent=BODY, fontSize=13, alignment=1, textColor=BLEU2)
+MONO = ParagraphStyle("Mono", parent=BODY, fontName="Courier", fontSize=8.5, leading=11)
+
+
+def _static_map_png(lat, lon, size=(455, 250), zoom=15, markers=None):
+    """Rend une carte statique (tuiles OSM) centrée sur le point. Renvoie des
+    octets PNG, ou None si indisponible (hors ligne, tuiles inaccessibles)."""
+    try:
+        latf, lonf = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return None
+    try:
+        import contextlib
+        from staticmap import CircleMarker, StaticMap
+        m = StaticMap(size[0], size[1], url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        pts = markers if markers else [(lonf, latf, "#c0392b")]
+        for mlon, mlat, color in pts:
+            m.add_marker(CircleMarker((mlon, mlat), color, 11))
+        # staticmap fait un print() par tuile échouée (hors ligne) : on l'étouffe.
+        with contextlib.redirect_stdout(io.StringIO()):
+            img = m.render(zoom=zoom)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 - pas de réseau/tuiles : on omet la carte
+        return None
+
+
+def _map_flowable(lat, lon, **kw):
+    data = _static_map_png(lat, lon, **kw)
+    if not data:
+        return None
+    img = Image(io.BytesIO(data))
+    maxw = 165 * mm
+    if img.drawWidth > maxw:
+        r = maxw / img.drawWidth
+        img.drawWidth *= r
+        img.drawHeight *= r
+    return img
 
 
 def _logo_flowable(logo) -> Optional[Image]:
@@ -119,67 +163,148 @@ def _appareil_label(d: dict) -> str:
     return " ".join(x for x in [a.get("marque"), a.get("modele")] if x) or "—"
 
 
-# --- 1) Dossier de vol complet ------------------------------------------------
+# --- 1) Dossier de vol complet (structure complète, niveau dossier officiel) ---
 
 def dossier_pdf(store: dict, dossier: dict) -> bytes:
     e = store.get("exploitant", {})
     p = _pilote_ref(store)
-    a = dossier.get("appareil", {})
+    d = dossier
+    a = d.get("appareil", {})
+    smallc = ParagraphStyle("sc", parent=SMALL, alignment=1)
     story: list = []
-    _header(story, "Dossier de vol", dossier.get("titre") or "Mission", e, store.get("logo"))
 
-    story.append(Paragraph("Exploitant", H2))
+    # ---------- Page de garde ----------
+    story.append(Spacer(1, 40))
+    logo = _logo_flowable(store.get("logo"))
+    if logo:
+        logo.hAlign = "CENTER"
+        story.append(logo)
+        story.append(Spacer(1, 16))
+    story.append(Paragraph(d.get("titre") or "Dossier de vol", COVERT))
+    dates = f"{d.get('dateDebut','')}  →  {d.get('dateFin','')}".strip(" →")
+    if dates:
+        story.append(Paragraph(dates, COVERS))
+    coverloc = ", ".join(x for x in [d.get("siteCp"), d.get("siteVille")] if x)
+    if coverloc:
+        story.append(Paragraph(coverloc, COVERS))
+    story.append(Spacer(1, 26))
+    story.append(Paragraph("Réalisé par " + (e.get("raison") or "l'exploitant"), smallc))
+    story.append(PageBreak())
+
+    # ---------- Sommaire ----------
+    story.append(Paragraph("Sommaire", H1))
+    for line in ["1 — Vue d'ensemble",
+                 "2 — Informations générales (déclarant, pilote référent, machine)",
+                 "3 — Classification (régime, critères, réglementation)",
+                 "4 — Contraintes & points de vigilance",
+                 "5 — Météo",
+                 "6 — Contexte (points de décollage et observateurs)"]:
+        story.append(Paragraph(line, BODY))
+    story.append(PageBreak())
+
+    # ---------- 1 Vue d'ensemble ----------
+    story.append(Paragraph("1 — Vue d'ensemble", H1N))
+    story.append(Paragraph("<b>Titre</b>", BODY))
+    story.append(Paragraph(d.get("titre") or "—", BODY))
+    mp = _map_flowable(d.get("lat"), d.get("lon"))
+    if mp:
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("<b>Zone de vol</b>", BODY))
+        mp.hAlign = "CENTER"
+        story.append(mp)
+        story.append(Spacer(1, 6))
+    loc = ", ".join(x for x in [d.get("siteAdresse"), d.get("siteCp"), d.get("siteVille")] if x) or d.get("lieu", "")
     story.append(_kv_table([
-        ("Raison sociale", e.get("raison", "")),
-        ("N° exploitant UAS", e.get("numUAS", "")),
+        ("Localisation", loc),
+        ("Coordonnées", f"{d.get('lat')}, {d.get('lon')}" if d.get("lat") and d.get("lon") else "—"),
+        ("Dates", dates or "—"),
+        ("Hauteur maximum (m)", str(d.get("hauteurMax") or "—")),
+        ("Vitesse maximale appareil (m/s)", str(d.get("grc", {}).get("vit") or "—")),
+    ]))
+    if d.get("notes"):
+        story.append(Paragraph("Informations complémentaires", H3N))
+        story.append(Paragraph(d.get("notes"), BODY))
+    story.append(PageBreak())
+
+    # ---------- 2 Informations générales ----------
+    story.append(Paragraph("2 — Informations générales", H1N))
+    story.append(Paragraph("2.1 — Déclarant", H2N))
+    story.append(_kv_table([
+        ("Société", e.get("raison", "")),
+        ("Responsable", e.get("responsable", "")),
+        ("Adresse", f"{e.get('adresse','')} {e.get('cp','')} {e.get('ville','')}".strip()),
+        ("Téléphone", e.get("tel", "")),
+        ("Email", e.get("mail", "")),
         ("SIRET", e.get("siret", "")),
+        ("N° exploitant UAS", e.get("numUAS", "")),
         ("Assurance RC", f"{e.get('assureur','')} — police {e.get('police','')}".strip(" —")),
     ]))
-
-    story.append(Paragraph("Télépilote", H2))
+    story.append(Paragraph("2.2 — Pilote référent", H2N))
     story.append(_kv_table([
-        ("Nom", f"{p.get('prenom','')} {p.get('nom','')}".strip()),
+        ("Prénom", p.get("prenom", "")),
+        ("Nom", p.get("nom", "")),
+        ("Téléphone", p.get("tel", "")),
+        ("Email", p.get("mail", "")),
         ("N° télépilote", p.get("numTele", "")),
         ("Mentions", ", ".join(p.get("mentions", [])) or "—"),
     ]))
-
-    story.append(Paragraph("Appareil", H2))
+    story.append(Paragraph("2.3 — Machine principale", H2N))
+    story.append(Paragraph("Données constructeur", H3N))
+    dj = drones.find(a.get("key", ""))
     story.append(_kv_table([
-        ("Modèle", _appareil_label(dossier)),
-        ("N° de série", a.get("serie", "")),
-        ("Classe C", dossier.get("classeC", "")),
+        ("Marque", a.get("marque", "") or ("DJI" if dj else "")),
+        ("Modèle", a.get("modele", "") or (dj["modele"] if dj else "—")),
+        ("Classe C", d.get("classeC", "")),
         ("Masse au décollage", f"{a.get('masse','')} g" if a.get("masse") else "—"),
+        ("Vitesse max (m/s)", str(d.get("grc", {}).get("vit") or "—")),
+        ("Système de géolocalisation", a.get("geoloc", "")),
     ]))
-
-    story.append(Paragraph("Mission & site", H2))
-    site = ", ".join(x for x in [dossier.get("siteAdresse"), dossier.get("siteCp"),
-                                 dossier.get("siteVille")] if x) or dossier.get("lieu", "")
-    coords = (f"{dossier.get('lat')}, {dossier.get('lon')}"
-              if dossier.get("lat") and dossier.get("lon") else "—")
+    story.append(Paragraph("Équipements", H3N))
+    equ = a.get("equipements", [])
+    if equ:
+        for it in equ:
+            story.append(Paragraph("• " + str(it), BODY))
+    else:
+        story.append(Paragraph("Équipements de série.", SMALL))
+    story.append(Paragraph("Informations complémentaires", H3N))
     story.append(_kv_table([
-        ("Lieu / site", site),
-        ("Coordonnées", coords),
-        ("Dates", f"{dossier.get('dateDebut','')} → {dossier.get('dateFin','')}".strip(" →")),
-        ("Hauteur max", f"{dossier.get('hauteurMax','')} m" if dossier.get("hauteurMax") else "—"),
-        ("Type de vol", dossier.get("typeVol", "")),
+        ("N° de série", a.get("serie", "")),
+        ("N° d'identification à distance", a.get("numId", "")),
+        ("N° d'enregistrement", a.get("numEnr", "")),
     ]))
-    meteo = dossier.get("meteo", {})
-    if meteo.get("metar"):
-        story.append(Paragraph("Météo relevée (METAR)", H2))
-        story.append(Paragraph(meteo.get("metar", ""), SMALL))
+    story.append(PageBreak())
 
-    story.append(Paragraph("Régime & conformité", H2))
-    rec = regimes.recommend(dossier)
-    regime = dossier.get("regime") or rec.regime
-    story.append(_kv_table([
-        ("Régime retenu", regimes.REGIME_LABEL.get(regime, regime or "—")),
-        ("Sous-catégorie / scénario", dossier.get("sousCategorie") or dossier.get("pdra") or "—"),
-        ("Recommandation auto.", f"{regimes.REGIME_SHORT.get(rec.regime, '')} — {rec.why}"),
+    # ---------- 3 Classification ----------
+    story.append(Paragraph("3 — Classification", H1N))
+    rec = regimes.recommend(d)
+    regime = d.get("regime") or rec.regime
+    sub = d.get("sousCategorie") or d.get("pdra") or ""
+    lbl = regimes.REGIME_LABEL.get(regime, regime or "—")
+    story.append(Paragraph("La classification retenue pour cette mission est :", BODY))
+    head = (sub + " — " if sub else "") + lbl
+    story.append(Paragraph(f"<b>{head}</b>", COVERS))
+    story.append(Paragraph("3.1 — Critères déclarés", H2N))
+    crs = regs.criteres(d)
+    if crs:
+        for c in crs:
+            story.append(Paragraph("• " + c, BODY))
+    else:
+        story.append(Paragraph("Renseignez le type de vol et l'environnement dans l'onglet Mission.", SMALL))
+    story.append(Paragraph("3.2 — Réglementation applicable", H2N))
+    reg_rows = [["Référence", "Exigence"]]
+    for ref, exp in regs.reglementation(regime, sub):
+        reg_rows.append([Paragraph(f"<b>{ref}</b>", SMALL), Paragraph(exp, SMALL)])
+    tr = Table(reg_rows, colWidths=[62 * mm, 113 * mm])
+    tr.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), BLEU), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, 0), 8), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.3, BORD),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
-
+    story.append(tr)
     if regime == "sora":
-        res = sora_mod.compute_sora(dossier.get("grc", {}), dossier.get("arc", {}))
-        story.append(Paragraph("Analyse SORA 2.5", H2))
+        res = sora_mod.compute_sora(d.get("grc", {}), d.get("arc", {}))
+        story.append(Paragraph("Analyse SORA 2.5", H2N))
         story.append(_kv_table([
             ("iGRC", str(res.igrc) if res.igrc is not None else "—"),
             ("GRC final", str(res.grc) if res.grc is not None else "—"),
@@ -187,52 +312,106 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
             ("SAIL", res.sail or "—"),
         ]))
         if res.oso_req:
-            oso_rows = [["OSO", "Objectif", "Robustesse"]]
+            oso = [["OSO", "Objectif", "Robustesse"]]
             for o in res.oso_req:
-                oso_rows.append([o["id"], o["t"], sora_mod.REQ_TXT.get(o["lvl"], o["lvl"])])
-            t = Table(oso_rows, colWidths=[12 * mm, 128 * mm, 35 * mm])
-            t.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), BLEU),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("LINEBELOW", (0, 1), (-1, -1), 0.3, BORD),
+                oso.append([o["id"], o["t"], sora_mod.REQ_TXT.get(o["lvl"], o["lvl"])])
+            t2 = Table(oso, colWidths=[12 * mm, 128 * mm, 35 * mm])
+            t2.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), BLEU2), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 7.5), ("LINEBELOW", (0, 1), (-1, -1), 0.3, BORD),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             ]))
-            story.append(t)
+            story.append(t2)
+    story.append(PageBreak())
 
-    # Check-list pré-vol
-    prevol = dossier.get("prevol", {})
+    # ---------- 4 Contraintes ----------
+    story.append(Paragraph("4 — Contraintes & points de vigilance", H1N))
+    story.append(Paragraph("Catégories de contraintes à examiner sur la zone (à confronter à "
+                           "Géoportail, AlphaTango et aux NOTAM). PrepaFlyPy ne détecte pas "
+                           "automatiquement les contraintes géographiques : documentez celles qui "
+                           "s'appliquent.", SMALL))
+    for cat, cons in regs.CONTRAINTES_REF:
+        story.append(Paragraph(cat, H3N))
+        story.append(Paragraph(cons, BODY))
+    if d.get("contraintesNotes"):
+        story.append(Paragraph("Contraintes relevées par l'exploitant", H2N))
+        story.append(Paragraph(d.get("contraintesNotes"), BODY))
+    story.append(PageBreak())
+
+    # ---------- 5 Météo ----------
+    story.append(Paragraph("5 — Météo", H1N))
+    meteo = d.get("meteo", {})
+    if meteo.get("icao"):
+        story.append(Paragraph(f"Aérodrome de référence : {meteo.get('icao')}", BODY))
+    if meteo.get("metar"):
+        story.append(Paragraph("METAR", H3N))
+        story.append(Paragraph(meteo.get("metar", ""), MONO))
+    if meteo.get("taf"):
+        story.append(Paragraph("TAF", H3N))
+        story.append(Paragraph(meteo.get("taf", ""), MONO))
+    if not (meteo.get("metar") or meteo.get("taf")):
+        story.append(Paragraph("Relevez la météo (onglet Mission → « Relever la météo ») avant le vol.", SMALL))
+    story.append(PageBreak())
+
+    # ---------- 6 Contexte ----------
+    story.append(Paragraph("6 — Contexte (points de vol)", H1N))
+    pts = d.get("points", [])
+    markers = []
+    for pt in pts:
+        try:
+            markers.append((float(pt.get("lon")), float(pt.get("lat")),
+                            "#e67e22" if pt.get("type") == "observateur" else "#2f6fb0"))
+        except (TypeError, ValueError):
+            pass
+    if markers:
+        cm = _map_flowable(markers[0][1], markers[0][0], markers=markers, zoom=16)
+        if cm:
+            cm.hAlign = "CENTER"
+            story.append(cm)
+            story.append(Spacer(1, 6))
+    if pts:
+        rows = [["#", "Type", "Intitulé", "Latitude", "Longitude"]]
+        for i, pt in enumerate(pts, 1):
+            typ = {"decollage": "Décollage/atterrissage", "observateur": "Observateur"}.get(pt.get("type"), pt.get("type", ""))
+            rows.append([str(i), typ, pt.get("intitule", ""), str(pt.get("lat", "")), str(pt.get("lon", ""))])
+        tp = Table(rows, colWidths=[10 * mm, 45 * mm, 60 * mm, 30 * mm, 30 * mm])
+        tp.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), BLEU), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, -1), 8), ("LINEBELOW", (0, 1), (-1, -1), 0.3, BORD),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(tp)
+    else:
+        story.append(Paragraph("Ajoutez vos points de décollage/atterrissage et d'observateurs "
+                               "(onglet Site → Contexte).", SMALL))
+
+    # ---------- Check-list & journal ----------
+    prevol = d.get("prevol", {})
     if prevol:
-        story.append(Paragraph("Check-list pré-vol", H2))
-        rows = [[("☑" if v else "☐") + "  " + str(k)] for k, v in prevol.items()]
-        if rows:
-            t = Table(rows, colWidths=[175 * mm])
-            t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9),
-                                   ("TOPPADDING", (0, 0), (-1, -1), 1),
-                                   ("BOTTOMPADDING", (0, 0), (-1, -1), 1)]))
-            story.append(t)
-
-    # Journal
-    journal = dossier.get("journal", [])
+        story.append(Paragraph("Check-list pré-vol", H2N))
+        for k, vv in prevol.items():
+            mark = '<font color="#1f8a4c"><b>[X]</b></font>' if vv else '[&nbsp;&nbsp;]'
+            story.append(Paragraph(mark + " " + str(k), BODY))
+    journal = d.get("journal", [])
     if journal:
-        story.append(Paragraph("Journal de vol", H2))
+        story.append(Paragraph("Journal de vol", H2N))
         jr = [["Date", "Horaires", "Nb vols", "Incidents"]]
         for s in journal:
             jr.append([s.get("date", ""), f"{s.get('debut','')}-{s.get('fin','')}",
                        str(s.get("nb", "")), s.get("incidents", "")])
-        t = Table(jr, colWidths=[28 * mm, 32 * mm, 20 * mm, 95 * mm])
-        t.setStyle(TableStyle([
+        tj = Table(jr, colWidths=[28 * mm, 32 * mm, 20 * mm, 95 * mm])
+        tj.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), BLEU2), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTSIZE", (0, 0), (-1, -1), 8), ("LINEBELOW", (0, 1), (-1, -1), 0.3, BORD),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
-        story.append(t)
+        story.append(tj)
 
-    story.append(Spacer(1, 10))
-    story.append(Paragraph("Document généré par PrepaFlyPy — aide à la préparation de vol, "
-                           "ne se substitue pas à la réglementation applicable.", SMALL))
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("Document généré par PrepaFlyPy — aide à la préparation de vol, ne se "
+                           "substitue pas à la réglementation applicable.", SMALL))
     return _build(story, "Dossier de vol")
+
 
 
 # --- 2) Rapport de mission client --------------------------------------------

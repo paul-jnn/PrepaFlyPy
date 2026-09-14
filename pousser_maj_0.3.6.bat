@@ -41,7 +41,7 @@ echo [2/6] Ajout des fichiers...
 git add .
 
 echo [3/6] Commit...
-git commit -m "PrepaFlyPy 0.3.4 (interface entierement bilingue FR-EN) : coeur SORA/regimes/DJI, API, UI web, CLI, tests, CI"
+git commit -m "PrepaFlyPy 0.3.6 : dossier de vol PDF complet (niveau dossier officiel) - reglementation par regime, contraintes, points de vol, cartes ; nouveaux champs appareil (geoloc, ID a distance, enregistrement, equipements) ; i18n FR/EN"
 
 echo [4/6] Configuration du depot distant...
 git remote get-url origin >nul 2>&1
@@ -60,13 +60,14 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [6/6] Tag de version v0.3.4 (declenche la construction des .exe)...
-git tag v0.3.4
-git push origin v0.3.4
+echo [6/6] Tag de version v0.3.6 (declenche la construction des .exe)...
+git tag v0.3.6
+git push origin v0.3.6
 
 echo.
 echo ================================================================
 echo   Termine. Va voir l'onglet "Actions" du depot sur GitHub :
 echo   les executables Windows/Linux se construisent tout seuls.
+echo   Quand la release v0.3.6 est prete, l'appli te proposera la MAJ.
 echo ================================================================
 pause

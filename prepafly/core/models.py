@@ -40,7 +40,12 @@ def empty_dossier() -> dict:
         "siteAdresse": "", "siteCp": "", "siteVille": "",
         "lat": "", "lon": "", "icao": "", "meteo": {},
         "regime": "", "sousCategorie": "", "pdra": "",
-        "appareil": {"key": "", "marque": "", "modele": "", "masse": "", "serie": ""},
+        "appareil": {"key": "", "marque": "", "modele": "", "masse": "", "serie": "",
+                     "equipements": [], "numId": "", "numEnr": "", "geoloc": ""},
+        # Points de contexte : décollage/atterrissage et observateurs (type, intitulé, lat, lon).
+        "points": [],
+        # Contraintes / points de vigilance notés par l'exploitant.
+        "contraintesNotes": "",
         "grc": {"dim": "", "vit": "", "densite": "", "mini": False,
                 "m1a": "none", "m1b": "none", "m1c": "none", "m2": "none"},
         "arc": {"atypical": "", "fl600": "", "airport": "", "airportClass": "",
@@ -76,6 +81,10 @@ def norm_dossier(d) -> dict:
         nd["meteo"] = dict(d.get("meteo") or {})
     if not isinstance(nd.get("journal"), list):
         nd["journal"] = []
+    if not isinstance(nd.get("points"), list):
+        nd["points"] = []
+    if not isinstance(nd["appareil"].get("equipements"), list):
+        nd["appareil"]["equipements"] = []
     return nd
 
 

@@ -23,6 +23,10 @@ hiddenimports += [
     "uvicorn.lifespan.on",
     "h11",
     "reportlab.graphics.barcode",
+    # Cartes statiques dans le dossier PDF (staticmap + Pillow + requests).
+    "staticmap",
+    "PIL",
+    "requests",
 ]
 
 a = Analysis(

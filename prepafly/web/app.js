@@ -333,7 +333,8 @@ function viewDossiers(v){
 function emptyDossier(){return {id:'d'+Math.random().toString(36).slice(2,10),titre:'',date:'',lieu:'',notes:'',client:'',
   dateDebut:'',dateFin:'',hauteurMax:'',classeC:'',typeVol:'',environnement:'',distanceTiers:'',
   siteAdresse:'',siteCp:'',siteVille:'',lat:'',lon:'',icao:'',meteo:{},regime:'',sousCategorie:'',pdra:'',
-  appareil:{key:'',marque:'',modele:'',masse:'',serie:''},
+  appareil:{key:'',marque:'',modele:'',masse:'',serie:'',equipements:[],numId:'',numEnr:'',geoloc:''},
+  points:[],contraintesNotes:'',
   grc:{dim:'',vit:'',densite:'',mini:false,m1a:'none',m1b:'none',m1c:'none',m2:'none'},
   arc:{atypical:'',fl600:'',airport:'',airportClass:'',above500:'',adsb:'',eac:'',urban:'',residual:'',reduceJust:'',tacJust:''},
   prevol:{},journal:[],forms:{regime:'',expType:'morale',derogType:'',aotGestionnaire:'',aotObjet:''}};}
@@ -374,12 +375,27 @@ function tabMission(v,D){
   opts.push(['manuel',t('opt_manual')]);
   ac.appendChild(field(t('f_modele'),D.appareil,'key',{type:'select',options:opts,after:()=>applyModel(D)}));
   const isDji=!!dronesDB.all.find(d=>d.key===D.appareil.key);
+  if(!Array.isArray(D.appareil.equipements))D.appareil.equipements=[];
   const g2=el('div','grid3');
   g2.append(field(t('f_marque'),D.appareil,'marque',{readonly:isDji}),field(t('f_modele'),D.appareil,'modele',{readonly:isDji}),
     field(t('f_classe'),D,'classeC',{type:'select',options:CLASSES}),
     field(t('f_dim'),D.grc,'dim',{readonly:isDji}),field(t('f_vitmax'),D.grc,'vit',{readonly:isDji}),
-    field(t('f_masse'),D.appareil,'masse',{readonly:isDji}),field(t('f_serie'),D.appareil,'serie',{full:true}));
-  ac.appendChild(g2); v.appendChild(ac);
+    field(t('f_masse'),D.appareil,'masse',{readonly:isDji}),
+    field(t('f_geoloc'),D.appareil,'geoloc'),field(t('f_serie'),D.appareil,'serie'),
+    field(t('f_numid'),D.appareil,'numId'),field(t('f_numenr'),D.appareil,'numEnr'));
+  ac.appendChild(g2);
+  // Équipements embarqués (liste éditable).
+  ac.appendChild(el('div','note',t('equip_title')));
+  const eq=D.appareil.equipements;
+  eq.forEach((it,i)=>{const row=el('div','row-actions');
+    const inp=el('input');inp.value=it||'';inp.placeholder=t('equip_ph');inp.style.flex='1';
+    inp.oninput=()=>{eq[i]=inp.value;scheduleSave();};
+    const rm=el('button','btn danger sm','−');rm.onclick=()=>{eq.splice(i,1);scheduleSave();renderView();};
+    row.append(inp,rm);ac.appendChild(row);});
+  if(!eq.length)ac.appendChild(el('div','note',t('equip_none')));
+  const addEq=el('button','btn sm',t('btn_add_equip'));addEq.onclick=()=>{eq.push('');scheduleSave();renderView();};
+  ac.appendChild(addEq);
+  v.appendChild(ac);
 
   const mc=card(t('site_kick'),t('site_title'),t('site_desc'));
   const g3=el('div','grid');
@@ -394,6 +410,28 @@ function tabMission(v,D){
   bar.append(geo,map,met); mc.appendChild(bar);
   if(D.meteo&&D.meteo.metar){mc.appendChild(el('div','note','METAR : '+D.meteo.metar));}
   v.appendChild(mc);
+
+  // ---- Contexte : points de vol + contraintes ----
+  if(!Array.isArray(D.points))D.points=[];
+  const cc=card(t('context_kick'),t('context_title'),t('context_desc'));
+  D.points.forEach((pt,i)=>{const row=el('div','row-actions');
+    const bd=badge(pt.type==='observateur'?'b-orange':'b-blue',pt.type==='observateur'?t('pt_observer'):t('pt_takeoff'));
+    const nm=el('input');nm.value=pt.intitule||'';nm.placeholder=t('pt_intitule_ph');nm.style.flex='1';
+    nm.oninput=()=>{pt.intitule=nm.value;scheduleSave();};
+    const la=el('input');la.value=pt.lat||'';la.placeholder='lat';la.style.width='90px';la.oninput=()=>{pt.lat=la.value;scheduleSave();};
+    const lo=el('input');lo.value=pt.lon||'';lo.placeholder='lon';lo.style.width='90px';lo.oninput=()=>{pt.lon=lo.value;scheduleSave();};
+    const rm=el('button','btn danger sm','−');rm.onclick=()=>{D.points.splice(i,1);scheduleSave();renderView();};
+    row.append(bd,nm,la,lo,rm);cc.appendChild(row);});
+  if(!D.points.length)cc.appendChild(el('div','note',t('pt_none')));
+  const barp=el('div','row-actions');
+  const addT=el('button','btn sm',t('btn_add_takeoff'));
+  addT.onclick=()=>{D.points.push({type:'decollage',intitule:'',lat:D.lat||'',lon:D.lon||''});scheduleSave();renderView();};
+  const addO=el('button','btn sm',t('btn_add_observer'));
+  addO.onclick=()=>{D.points.push({type:'observateur',intitule:'',lat:'',lon:''});scheduleSave();renderView();};
+  barp.append(addT,addO);cc.appendChild(barp);
+  cc.appendChild(field(t('f_contraintes'),D,'contraintesNotes',{type:'textarea',rows:3,full:true,after:()=>{}}));
+  const ta=cc.querySelector('textarea');if(ta)ta.placeholder=t('contraintes_ph');
+  v.appendChild(cc);
 }
 function applyModel(D){
   const d=dronesDB.all.find(x=>x.key===D.appareil.key);
