@@ -1,64 +1,53 @@
-"""Interrogation des contraintes drone à un point (couche IGN/Géoportail).
+"""Interrogation des contraintes drone à un point (couche IGN/Géoplateforme).
 
-La carte affiche la couche raster « restrictions drone » (TRANSPORTS.DRONES.
-RESTRICTIONS), qui n'est qu'une image. Pour obtenir la LISTE des contraintes à un
-point précis, on interroge le service WMS interrogeable d'IGN (GetFeatureInfo),
-qui renvoie les entités (zones) présentes sous le point avec leurs attributs.
+La carte affiche la couche raster « restrictions drone » (WMTS), qui n'est qu'une
+image et n'est pas interrogeable. Pour obtenir la LISTE des zones à un point, on
+interroge le service WFS (données vectorielles) de la Géoplateforme, qui renvoie
+les polygones de restriction avec leurs attributs.
+
+Couche : TRANSPORTS.DRONES.RESTRICTIONS:carte_restriction_drones_lf
+(« Restrictions UAS catégorie Ouverte et Aéromodélisme », IGN/DGAC).
+Attributs par zone : « limite » (plafond de hauteur en m ; 0 = interdiction) et
+« remarque » (motif / précision).
 
 L'appel est fait côté serveur (pas de contrainte CORS) et échoue proprement hors
-ligne. Les attributs exacts renvoyés par IGN peuvent varier : on renvoie donc à
-la fois un libellé lisible (best-effort) et les propriétés brutes, pour rester
-robuste et affichable quoi qu'il arrive.
+ligne (l'appelant affiche l'erreur).
 """
 from __future__ import annotations
 
-import math
-
 import httpx
 
-# Service WMS raster interrogeable d'IGN (sans clé).
-WMS = "https://data.geopf.fr/wms-r/wms"
-LAYER = "TRANSPORTS.DRONES.RESTRICTIONS"
+WFS = "https://data.geopf.fr/wfs/ows"
+TYPENAME = "TRANSPORTS.DRONES.RESTRICTIONS:carte_restriction_drones_lf"
 _UA = {"User-Agent": "PrepaFlyPy/1.0"}
-
-# Clés d'attributs susceptibles de porter un nom / un plafond de hauteur, testées
-# dans l'ordre. IGN peut nommer ces champs différemment selon les millésimes.
-_NAME_KEYS = ("nom", "name", "libelle", "libellé", "intitule", "zone", "designation", "title")
-_LIMIT_KEYS = ("limite", "hauteur", "height", "plafond", "altitude", "niveau", "gridcode", "value", "valeur")
-
-
-def _to_mercator(lon: float, lat: float) -> tuple[float, float]:
-    """Convertit lon/lat (WGS84) en coordonnées Web Mercator (EPSG:3857)."""
-    x = lon * 20037508.34 / 180.0
-    y = math.log(math.tan((90.0 + lat) * math.pi / 360.0)) / (math.pi / 180.0)
-    y = y * 20037508.34 / 180.0
-    return x, y
 
 
 def _feature_label(props: dict) -> str:
-    """Construit un libellé lisible à partir des propriétés d'une entité."""
-    name = ""
-    for k in props:
-        if k.lower() in _NAME_KEYS and props[k] not in (None, ""):
-            name = str(props[k]).strip()
-            break
-    limit = ""
-    for k in props:
-        if k.lower() in _LIMIT_KEYS and props[k] not in (None, ""):
-            limit = str(props[k]).strip()
-            break
-    if name and limit:
-        return f"{name} — {limit}"
-    if name:
-        return name
-    if limit:
-        return f"Restriction (plafond {limit})"
-    # Dernier recours : premières propriétés non vides.
-    parts = [f"{k}: {v}" for k, v in props.items() if v not in (None, "")][:3]
+    """Libellé lisible d'une zone à partir de « limite » et « remarque »."""
+    # IGN suffixe parfois d'un « * » renvoyant à une note : on l'enlève.
+    lim = str(props.get("limite") or "").strip().rstrip(" *").strip()
+    rem = str(props.get("remarque") or "").strip().rstrip(" *").strip()
+    # « limite » est une hauteur en mètres (0 = vol interdit) ou parfois un texte.
+    lim_txt = ""
+    if lim:
+        num = lim.replace(",", ".").replace(" ", "")
+        if num.replace(".", "", 1).isdigit():
+            val = float(num)
+            lim_txt = "Vol interdit (0 m)" if val == 0 else f"Hauteur max {lim} m"
+        else:
+            lim_txt = lim
+    if lim_txt and rem:
+        return f"{lim_txt} — {rem}"
+    if lim_txt:
+        return lim_txt
+    if rem:
+        return rem
+    parts = [f"{k}: {v}" for k, v in props.items()
+             if v not in (None, "") and k not in ("geom", "geometry")][:3]
     return " / ".join(parts) if parts else "Zone de restriction (détails non fournis)"
 
 
-def query_restrictions(lat: float, lon: float, timeout: float = 8.0) -> dict:
+def query_restrictions(lat: float, lon: float, timeout: float = 20.0) -> dict:
     """Renvoie les contraintes drone au point donné.
 
     Retour : {"ok": bool, "count": int, "features": [{"label": str,
@@ -69,25 +58,31 @@ def query_restrictions(lat: float, lon: float, timeout: float = 8.0) -> dict:
     except (TypeError, ValueError):
         return {"ok": False, "count": 0, "features": [], "error": "Coordonnées invalides"}
 
-    x, y = _to_mercator(lonf, latf)
-    half = 120.0  # demi-fenêtre (m) autour du point interrogé
-    bbox = f"{x - half},{y - half},{x + half},{y + half}"
+    # Petite fenêtre autour du point (~170 m). En CRS urn EPSG::4326, l'ordre des
+    # axes est lat, lon : la BBOX suit donc lat_min, lon_min, lat_max, lon_max.
+    d = 0.0016
+    bbox = f"{latf - d},{lonf - d},{latf + d},{lonf + d},urn:ogc:def:crs:EPSG::4326"
     params = {
-        "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetFeatureInfo",
-        "LAYERS": LAYER, "QUERY_LAYERS": LAYER,
-        "CRS": "EPSG:3857", "WIDTH": "101", "HEIGHT": "101", "I": "50", "J": "50",
-        "INFO_FORMAT": "application/json", "FEATURE_COUNT": "20", "BBOX": bbox,
+        "SERVICE": "WFS", "VERSION": "2.0.0", "REQUEST": "GetFeature",
+        "TYPENAMES": TYPENAME, "SRSNAME": "urn:ogc:def:crs:EPSG::4326",
+        # On ne récupère que les attributs (pas la géométrie, lourde) : bien plus rapide.
+        "PROPERTYNAME": "limite,remarque",
+        "BBOX": bbox, "COUNT": "30", "outputFormat": "application/json",
     }
     try:
-        r = httpx.get(WMS, params=params, headers=_UA, timeout=timeout)
+        r = httpx.get(WFS, params=params, headers=_UA, timeout=timeout)
         r.raise_for_status()
         data = r.json()
     except Exception as e:  # noqa: BLE001 - hors ligne / service indisponible
         return {"ok": False, "count": 0, "features": [], "error": str(e)}
 
     feats = data.get("features", []) if isinstance(data, dict) else []
-    out = []
+    seen, out = set(), []
     for f in feats:
-        props = f.get("properties", {}) if isinstance(f, dict) else {}
+        props = (f.get("properties", {}) if isinstance(f, dict) else {}) or {}
+        key = (props.get("limite"), props.get("remarque"))
+        if key in seen:  # une même zone peut être renvoyée en plusieurs morceaux
+            continue
+        seen.add(key)
         out.append({"label": _feature_label(props), "properties": props})
     return {"ok": True, "count": len(out), "features": out, "error": ""}

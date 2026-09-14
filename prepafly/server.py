@@ -19,13 +19,22 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .core import (airspace, drones, forms, geocode, i18n, models, regimes,
-                   reports, shortcuts, sora, storage, updater, weather)
+from .core import (airspace, drones, elevation, forms, geocode, geodata, i18n,
+                   models, regimes, reports, shortcuts, sora, storage, updater, weather)
 from .core.version import RELEASES_URL, REPO_URL, __version__
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 app = FastAPI(title="PrepaFlyPy", version=__version__)
+
+
+@app.middleware("http")
+async def _no_cache(request, call_next):
+    # Le navigateur interne (WebView2) peut servir un ancien app.js/HTML en cache :
+    # on désactive le cache pour que toute mise à jour soit prise en compte au démarrage.
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
 
 
 # --- Méta / références --------------------------------------------------------
@@ -115,6 +124,15 @@ async def api_open_conformity(request: Request):
     return regimes.open_conformity(body)
 
 
+@app.get("/api/procedures")
+def api_procedures(regime: str, sub: str = ""):
+    # Démarches à effectuer (déclaration/autorisation/documents…) pour le régime.
+    from .core import regs
+    items = regs.procedures(regime, sub)
+    return {"items": [{"type": t, "titre": ti, "detail": de} for t, ti, de in items],
+            "labels": regs.PROC_TYPE_LABEL}
+
+
 # --- PIN ----------------------------------------------------------------------
 @app.get("/api/pin/status")
 def pin_status():
@@ -143,10 +161,41 @@ def api_weather(icao: str):
     return weather.brief(icao)
 
 
+@app.get("/api/forecast")
+def api_forecast(lat: float, lon: float, date: str = ""):
+    # Prévision météo horaire (Open-Meteo) pour le site et la date de vol.
+    return weather.forecast_hourly(lat, lon, date)
+
+
 @app.get("/api/restrictions")
 def api_restrictions(lat: float, lon: float):
     # Contraintes drone au point (interrogation IGN, côté serveur pour éviter CORS).
     return airspace.query_restrictions(lat, lon)
+
+
+@app.post("/api/elevation")
+async def api_elevation(request: Request):
+    from fastapi.concurrency import run_in_threadpool
+    body = await request.json()
+    zone = body.get("zone", [])
+    res = await run_in_threadpool(elevation.query_elevation, zone)
+    print(f"[elevation] ok={res.get('ok')} min={res.get('min')} max={res.get('max')} "
+          f"err={str(res.get('error',''))[:120]}", flush=True)
+    return res
+
+
+@app.post("/api/roads-rails")
+async def api_roads_rails(request: Request):
+    # Routes et voies ferrées autour de la zone (OpenStreetMap / Overpass).
+    from fastapi.concurrency import run_in_threadpool
+    body = await request.json()
+    zone = body.get("zone", [])
+    print(f"[roads-rails] requête reçue : {len(zone)} sommets de zone", flush=True)
+    res = await run_in_threadpool(geodata.query_roads_rails, zone)
+    print(f"[roads-rails] réponse : ok={res.get('ok')} "
+          f"routes={len(res.get('roads', []))} voies={len(res.get('rails', []))} "
+          f"err={str(res.get('error', ''))[:150]}", flush=True)
+    return res
 
 
 @app.get("/api/geocode")

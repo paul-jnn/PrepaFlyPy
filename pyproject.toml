@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prepaflypy"
-version = "0.3.7"
+version = "0.3.8"
 description = "Assistant de préparation de vol drone (SORA 2.5, régimes FR/EU, base DJI, formulaires, MANEX). Éditeur : M.G.I."
 readme = "README.md"
 requires-python = ">=3.10"

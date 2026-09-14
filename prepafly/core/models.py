@@ -46,6 +46,10 @@ def empty_dossier() -> dict:
         "points": [],
         # Zone de vol dessinée sur la carte : liste de sommets [lat, lon].
         "zone": [],
+        # Désignation libre de la zone de vol (ex. « Toiture bâtiment A »).
+        "zoneNom": "",
+        # Contraintes détectées automatiquement (routes/voies ferrées OSM).
+        "contraintesAuto": {"roads": [], "rails": [], "ts": ""},
         # Contraintes / points de vigilance notés par l'exploitant.
         "contraintesNotes": "",
         "grc": {"dim": "", "vit": "", "densite": "", "mini": False,
@@ -87,6 +91,13 @@ def norm_dossier(d) -> dict:
         nd["points"] = []
     if not isinstance(nd.get("zone"), list):
         nd["zone"] = []
+    ca = nd.get("contraintesAuto")
+    if not isinstance(ca, dict):
+        nd["contraintesAuto"] = {"roads": [], "rails": [], "ts": ""}
+    else:
+        ca.setdefault("roads", [])
+        ca.setdefault("rails", [])
+        ca.setdefault("ts", "")
     if not isinstance(nd["appareil"].get("equipements"), list):
         nd["appareil"]["equipements"] = []
     return nd

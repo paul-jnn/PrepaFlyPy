@@ -15,8 +15,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import (Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer,
-                                Table, TableStyle)
+from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph,
+                                SimpleDocTemplate, Spacer, Table, TableStyle)
 
 from . import drones, regimes, regs, sora as sora_mod
 
@@ -41,12 +41,31 @@ H3N = ParagraphStyle("H3N", parent=_ss["Heading3"], textColor=GRIS, fontSize=10.
 COVERT = ParagraphStyle("CoverT", parent=_ss["Title"], textColor=BLEU, fontSize=26, alignment=1, spaceAfter=10)
 COVERS = ParagraphStyle("CoverS", parent=BODY, fontSize=13, alignment=1, textColor=BLEU2)
 MONO = ParagraphStyle("Mono", parent=BODY, fontName="Courier", fontSize=8.5, leading=11)
+# Page de garde : texte blanc sur bandeau bleu.
+COVER_KICK = ParagraphStyle("CoverKick", parent=BODY, fontSize=11, alignment=1,
+                            textColor=colors.HexColor("#bcd4f2"), spaceAfter=8)
+COVER_TITLE = ParagraphStyle("CoverTitle", parent=_ss["Title"], fontSize=27, alignment=1,
+                             textColor=colors.white, leading=32, spaceAfter=0)
+COVER_DATE = ParagraphStyle("CoverDate", parent=BODY, fontSize=13, alignment=1,
+                            textColor=colors.white, spaceBefore=10)
 
 
-def _static_map_png(lat, lon, size=(455, 250), zoom=15, markers=None, polygon=None):
-    """Rend une carte statique (tuiles OSM) centrée sur le point. Renvoie des
-    octets PNG, ou None si indisponible (hors ligne, tuiles inaccessibles).
-    polygon : liste de sommets [lat, lon] tracés en zone de vol (optionnel)."""
+# Fonds de carte disponibles (tuiles XYZ). "sat" = imagerie aérienne.
+_BASEMAPS = {
+    "osm": "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "sat": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+}
+
+
+def _static_map_png(lat, lon, size=(455, 250), zoom=15, markers=None, polygon=None,
+                    basemap="osm", lines=None, fill=True):
+    """Rend une carte statique centrée sur le point. Renvoie des octets PNG, ou
+    None si indisponible (hors ligne, tuiles inaccessibles).
+
+    - basemap : "osm" (plan) ou "sat" (imagerie aérienne).
+    - polygon : sommets [lat, lon] de la zone de vol (remplie si fill=True).
+    - lines   : liste de tracés [(coords [lat,lon], couleur, épaisseur)] (routes, voies…).
+    """
     try:
         latf, lonf = float(lat), float(lon)
     except (TypeError, ValueError):
@@ -54,14 +73,33 @@ def _static_map_png(lat, lon, size=(455, 250), zoom=15, markers=None, polygon=No
     try:
         import contextlib
         from staticmap import CircleMarker, Line, StaticMap
-        m = StaticMap(size[0], size[1], url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
-        # Zone de vol : contour fermé tracé sous les marqueurs (Line = rendu sûr).
+        try:
+            from staticmap import Polygon as SMPolygon
+        except Exception:  # noqa: BLE001 - version sans Polygon
+            SMPolygon = None
+        url = _BASEMAPS.get(basemap, _BASEMAPS["osm"])
+        m = StaticMap(size[0], size[1], url_template=url)
+        # Tracés supplémentaires (routes, voies ferrées…) sous la zone.
+        for coords_ll, color, width in (lines or []):
+            pts = [(p[1], p[0]) for p in coords_ll if p]
+            if len(pts) >= 2:
+                m.add_line(Line(pts, color, width))
+        # Zone de vol : polygone rempli si possible, sinon contour.
         if polygon and len(polygon) >= 3:
             coords = [(p[1], p[0]) for p in polygon]  # staticmap attend (lon, lat)
-            coords.append(coords[0])
-            m.add_line(Line(coords, "#2f6fb0", 3))
+            ring = coords + [coords[0]]
+            done = False
+            if fill and SMPolygon is not None:
+                try:
+                    m.add_polygon(SMPolygon(ring, "#3a8ddb66", "#1b3a6b", simplify=False))
+                    done = True
+                except Exception:  # noqa: BLE001 - repli sur le contour
+                    done = False
+            if not done:
+                m.add_line(Line(ring, "#1b3a6b", 3))
         pts = markers if markers else [(lonf, latf, "#c0392b")]
         for mlon, mlat, color in pts:
+            m.add_marker(CircleMarker((mlon, mlat), "#ffffff", 15))
             m.add_marker(CircleMarker((mlon, mlat), color, 11))
         # staticmap fait un print() par tuile échouée (hors ligne) : on l'étouffe.
         with contextlib.redirect_stdout(io.StringIO()):
@@ -73,8 +111,7 @@ def _static_map_png(lat, lon, size=(455, 250), zoom=15, markers=None, polygon=No
         return None
 
 
-def _map_flowable(lat, lon, **kw):
-    data = _static_map_png(lat, lon, **kw)
+def _fit_flowable(data):
     if not data:
         return None
     img = Image(io.BytesIO(data))
@@ -84,6 +121,117 @@ def _map_flowable(lat, lon, **kw):
         img.drawWidth *= r
         img.drawHeight *= r
     return img
+
+
+def _map_flowable(lat, lon, **kw):
+    data = _static_map_png(lat, lon, **kw)
+    # Repli : si le fond satellite ne se charge pas (réseau), on retente en plan OSM.
+    if not data and kw.get("basemap") == "sat":
+        kw = dict(kw); kw["basemap"] = "osm"
+        data = _static_map_png(lat, lon, **kw)
+    return _fit_flowable(data)
+
+
+def _mercator_xy(lon, lat, zoom):
+    """Projection Web Mercator en coordonnées de tuiles (identique à staticmap)."""
+    import math
+    x = (lon + 180.0) / 360.0 * (2 ** zoom)
+    y = (1 - math.log(math.tan(math.radians(lat)) + 1 / math.cos(math.radians(lat))) / math.pi) / 2 * (2 ** zoom)
+    return x, y
+
+
+def _plan_map_png(points, polygon=None, lines=None, basemap="osm", size=(455, 300), focus=None):
+    """Carte du plan de vol : zone + marqueurs (points nets) + tracés (routes/voies).
+
+    points : liste de dicts {type, lat, lon} dans l'ordre du tableau.
+    focus  : emprise [[lat, lon], …] à cadrer (sinon on cadre tout le contenu).
+    Renvoie des octets PNG, ou None si indisponible.
+    """
+    pts = []
+    for i, p in enumerate(points or []):
+        try:
+            pts.append((i + 1, float(p["lat"]), float(p["lon"]), p.get("type")))
+        except (TypeError, ValueError, KeyError):
+            pass
+    if focus:
+        coords_all = [(a, b) for a, b in focus]
+    else:
+        coords_all = [(la, lo) for _, la, lo, _ in pts]
+        if polygon:
+            coords_all += [(a, b) for a, b in polygon]
+        for coords_ll, _c, _w in (lines or []):
+            coords_all += [(a, b) for a, b in coords_ll]
+    if not coords_all:
+        return None
+    lats = [c[0] for c in coords_all]
+    lons = [c[1] for c in coords_all]
+    c_lon = (min(lons) + max(lons)) / 2
+    c_lat = (min(lats) + max(lats)) / 2
+    W, H = size
+    # Choisit le zoom le plus fin qui contient toute l'emprise (avec marge).
+    zoom = 17
+    for z in range(18, 8, -1):
+        dx = abs(_mercator_xy(max(lons), c_lat, z)[0] - _mercator_xy(min(lons), c_lat, z)[0]) * 256
+        dy = abs(_mercator_xy(c_lon, min(lats), z)[1] - _mercator_xy(c_lon, max(lats), z)[1]) * 256
+        if dx <= W * 0.80 and dy <= H * 0.80:
+            zoom = z
+            break
+    try:
+        import contextlib
+        from PIL import ImageDraw
+        from staticmap import Line, StaticMap
+        try:
+            from staticmap import Polygon as SMPolygon
+        except Exception:  # noqa: BLE001
+            SMPolygon = None
+        m = StaticMap(W, H, url_template=_BASEMAPS.get(basemap, _BASEMAPS["osm"]))
+        for coords_ll, color, width in (lines or []):
+            lp = [(p[1], p[0]) for p in coords_ll if p]
+            if len(lp) >= 2:
+                m.add_line(Line(lp, color, width))
+        if polygon and len(polygon) >= 3:
+            ring = [(b, a) for a, b in polygon]
+            ring.append(ring[0])
+            drawn = False
+            if SMPolygon is not None:
+                try:
+                    m.add_polygon(SMPolygon(ring, "#3a8ddb66", "#1b3a6b", simplify=False))
+                    drawn = True
+                except Exception:  # noqa: BLE001
+                    drawn = False
+            if not drawn:
+                m.add_line(Line(ring, "#1b3a6b", 3))
+        with contextlib.redirect_stdout(io.StringIO()):
+            img = m.render(zoom=zoom, center=[c_lon, c_lat]).convert("RGB")
+    except Exception:  # noqa: BLE001 - pas de réseau/tuiles
+        return None
+    # Marqueurs compacts dessinés par-dessus (pixels calculés comme staticmap).
+    # Petits points nets (pas de numéros) : bien plus lisibles quand ils sont serrés.
+    try:
+        draw = ImageDraw.Draw(img)
+        xc, yc = _mercator_xy(c_lon, c_lat, zoom)
+        rad = 5
+        for num, la, lo, typ in pts:
+            mx, my = _mercator_xy(lo, la, zoom)
+            px = (mx - xc) * 256 + W / 2
+            py = (my - yc) * 256 + H / 2
+            color = (230, 126, 34) if typ == "observateur" else (47, 111, 176)
+            draw.ellipse([px - rad - 1.5, py - rad - 1.5, px + rad + 1.5, py + rad + 1.5], fill=(255, 255, 255))
+            draw.ellipse([px - rad, py - rad, px + rad, py + rad], fill=color)
+    except Exception:  # noqa: BLE001 - si le dessin échoue, on garde la carte brute
+        pass
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _plan_map_flowable(points, **kw):
+    data = _plan_map_png(points, **kw)
+    # Repli sur le plan OSM si le satellite ne se charge pas.
+    if not data and kw.get("basemap") == "sat":
+        kw = dict(kw); kw["basemap"] = "osm"
+        data = _plan_map_png(points, **kw)
+    return _fit_flowable(data)
 
 
 def _poly_area_m2(zone) -> float:
@@ -199,21 +347,39 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
     story: list = []
 
     # ---------- Page de garde ----------
-    story.append(Spacer(1, 40))
+    dates = f"{d.get('dateDebut','')}  →  {d.get('dateFin','')}".strip(" →")
+    coverloc = ", ".join(x for x in [d.get("siteCp"), d.get("siteVille")] if x)
+    story.append(Spacer(1, 34))
     logo = _logo_flowable(store.get("logo"))
     if logo:
         logo.hAlign = "CENTER"
         story.append(logo)
-        story.append(Spacer(1, 16))
-    story.append(Paragraph(d.get("titre") or "Dossier de vol", COVERT))
-    dates = f"{d.get('dateDebut','')}  →  {d.get('dateFin','')}".strip(" →")
+        story.append(Spacer(1, 22))
+    # Bandeau bleu plein cadre avec le titre en blanc.
+    panel = [Paragraph("DOSSIER DE VOL", COVER_KICK),
+             Paragraph(d.get("titre") or "Mission drone", COVER_TITLE)]
     if dates:
-        story.append(Paragraph(dates, COVERS))
-    coverloc = ", ".join(x for x in [d.get("siteCp"), d.get("siteVille")] if x)
+        panel.append(Paragraph(dates, COVER_DATE))
     if coverloc:
-        story.append(Paragraph(coverloc, COVERS))
-    story.append(Spacer(1, 26))
-    story.append(Paragraph("Réalisé par " + (e.get("raison") or "l'exploitant"), smallc))
+        panel.append(Paragraph(coverloc, COVER_DATE))
+    band = Table([[panel]], colWidths=[174 * mm])
+    band.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BLEU),
+        ("TOPPADDING", (0, 0), (-1, -1), 34), ("BOTTOMPADDING", (0, 0), (-1, -1), 34),
+        ("LEFTPADDING", (0, 0), (-1, -1), 20), ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+    ]))
+    story.append(band)
+    story.append(Spacer(1, 22))
+    # Résumé exploitant / pilote / appareil sous le bandeau.
+    story.append(_kv_table([
+        ("Exploitant", e.get("raison", "")),
+        ("Télépilote référent", f"{p.get('prenom','')} {p.get('nom','')}".strip()),
+        ("Aéronef", _appareil_label(d)),
+        ("Régime visé", regimes.REGIME_LABEL.get(d.get("regime", ""), d.get("regime", "") or "—")),
+    ]))
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("Réalisé par " + (e.get("raison") or "l'exploitant")
+                           + " · édité le " + datetime.date.today().strftime("%d/%m/%Y"), smallc))
     story.append(PageBreak())
 
     # ---------- Sommaire ----------
@@ -232,20 +398,29 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
     story.append(Paragraph("<b>Titre</b>", BODY))
     story.append(Paragraph(d.get("titre") or "—", BODY))
     zone = d.get("zone") or []
+    zone_nom = d.get("zoneNom") or ""
     clat, clon = d.get("lat"), d.get("lon")
     if (not clat or not clon) and len(zone) >= 1:
-        clat, clon = zone[0][0], zone[0][1]
-    mp = _map_flowable(clat, clon, polygon=zone)
+        clat = sum(pt[0] for pt in zone) / len(zone)
+        clon = sum(pt[1] for pt in zone) / len(zone)
+    # Carte de la zone de vol sur imagerie aérienne (polygone rempli).
+    mp = _map_flowable(clat, clon, polygon=zone, basemap="sat",
+                       zoom=16 if len(zone) >= 3 else 14)
     if mp:
-        story.append(Spacer(1, 6))
-        story.append(Paragraph("<b>Zone de vol</b>", BODY))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("<b>Zone de vol</b>" + (f" — {zone_nom}" if zone_nom else ""), BODY))
         mp.hAlign = "CENTER"
         story.append(mp)
+        story.append(Paragraph("Imagerie : Esri World Imagery. Zone de vol figurée en bleu.", SMALL))
         story.append(Spacer(1, 6))
     loc = ", ".join(x for x in [d.get("siteAdresse"), d.get("siteCp"), d.get("siteVille")] if x) or d.get("lieu", "")
-    rows = [
+    rows = []
+    if zone_nom:
+        rows.append(("Désignation de la zone", zone_nom))
+    rows += [
         ("Localisation", loc),
-        ("Coordonnées", f"{d.get('lat')}, {d.get('lon')}" if d.get("lat") and d.get("lon") else "—"),
+        ("Coordonnées (centre)", f"{clat:.5f}, {clon:.5f}" if isinstance(clat, float) else
+         (f"{d.get('lat')}, {d.get('lon')}" if d.get("lat") and d.get("lon") else "—")),
         ("Dates", dates or "—"),
         ("Hauteur maximum (m)", str(d.get("hauteurMax") or "—")),
         ("Vitesse maximale appareil (m/s)", str(d.get("grc", {}).get("vit") or "—")),
@@ -354,17 +529,76 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ]))
             story.append(t2)
+
+    # 3.3 — Démarches à effectuer selon le régime retenu.
+    story.append(Paragraph("3.3 — Démarches à effectuer", H2N))
+    proc = regs.procedures(regime, sub)
+    prows = []
+    for typ, titre, detail in proc:
+        prows.append([Paragraph(f"<b>{regs.PROC_TYPE_LABEL.get(typ, typ)}</b>", SMALL),
+                      Paragraph(f"<b>{titre}</b><br/>{detail}", BODY)])
+    tp3 = Table(prows, colWidths=[30 * mm, 145 * mm])
+    tp3.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.3, BORD),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(tp3)
     story.append(PageBreak())
 
     # ---------- 4 Contraintes ----------
     story.append(Paragraph("4 — Contraintes & points de vigilance", H1N))
     story.append(Paragraph("Catégories de contraintes à examiner sur la zone (à confronter à "
-                           "Géoportail, AlphaTango et aux NOTAM). PrepaFlyPy ne détecte pas "
-                           "automatiquement les contraintes géographiques : documentez celles qui "
-                           "s'appliquent.", SMALL))
+                           "Géoportail, AlphaTango et aux NOTAM).", SMALL))
+    story.append(Paragraph("4.1 — Catégories générales", H2N))
+    _ref = dict(regs.CONTRAINTES_REF)
+    _elev = (d.get("contraintesAuto") or {}).get("elevation") or {}
     for cat, cons in regs.CONTRAINTES_REF:
         story.append(Paragraph(cat, H3N))
         story.append(Paragraph(cons, BODY))
+        if cat == "Élévation du sol" and _elev.get("min") is not None:
+            story.append(Paragraph(f"<b>Relevé IGN sur la zone : {_elev.get('min')} à "
+                                   f"{_elev.get('max')} m d'altitude.</b>", BODY))
+
+    ca = d.get("contraintesAuto") or {}
+    zone4 = d.get("zone") or []
+    roads = ca.get("roads") or []
+    rails = ca.get("rails") or []
+
+    # 4.2 — Routes autour de la zone : UNE seule carte, toutes les routes surlignées.
+    if roads:
+        story.append(PageBreak())
+        story.append(Paragraph("4.2 — Routes autour de la zone", H2N))
+        story.append(Paragraph(_ref.get("Routes", ""), BODY))
+        all_lines = [(g, "#c0392b", 5) for r in roads for g in r.get("geoms", [])]
+        mp = _plan_map_flowable([], polygon=zone4, lines=all_lines, basemap="osm",
+                                size=(680, 460), focus=zone4)
+        if mp:
+            mp.hAlign = "CENTER"
+            story.append(mp)
+        story.append(Paragraph("Routes détectées (surlignées en rouge) :", SMALL))
+        for r in roads:
+            story.append(Paragraph(f"• {r.get('type','Route')} — {r.get('name','')}", BODY))
+
+    # 4.3 — Voies ferrées autour de la zone : UNE seule carte, toutes surlignées.
+    if rails:
+        story.append(PageBreak())
+        story.append(Paragraph("4.3 — Voies ferrées autour de la zone", H2N))
+        story.append(Paragraph(_ref.get("Voies ferrées", ""), BODY))
+        all_lines = [(g, "#7a3fbf", 5) for r in rails for g in r.get("geoms", [])]
+        mp = _plan_map_flowable([], polygon=zone4, lines=all_lines, basemap="osm",
+                                size=(680, 460), focus=zone4)
+        if mp:
+            mp.hAlign = "CENTER"
+            story.append(mp)
+        story.append(Paragraph("Voies ferrées détectées (surlignées en violet) :", SMALL))
+        for r in rails:
+            story.append(Paragraph(f"• Voie ferrée — {r.get('name','')}", BODY))
+
+    if not roads and not rails:
+        story.append(Paragraph("Astuce : dans l'onglet « Plan de vol », cliquez sur « Détecter routes "
+                               "& voies ferrées » pour documenter automatiquement ces contraintes.", SMALL))
+
     if d.get("contraintesNotes"):
         story.append(Paragraph("Contraintes relevées par l'exploitant", H2N))
         story.append(Paragraph(d.get("contraintesNotes"), BODY))
@@ -373,6 +607,32 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
     # ---------- 5 Météo ----------
     story.append(Paragraph("5 — Météo", H1N))
     meteo = d.get("meteo", {})
+    # Tableau de prévision horaire (Open-Meteo) : le cœur de la section, comme FlyBy.
+    hourly = meteo.get("hourly") or []
+    if hourly:
+        if meteo.get("hourlyDate"):
+            story.append(Paragraph("Prévision horaire du " + str(meteo.get("hourlyDate")), H3N))
+        hdr = ["Heure", "Nuages", "T°C", "Pluie (mm)", "Vent (km/h)", "Rafales (km/h)", "Cap (°)"]
+        rows = [hdr]
+        for r in hourly:
+            def _v(x, suf=""):
+                return (str(x) + suf) if x is not None else "—"
+            rows.append([r.get("heure", ""), _v(r.get("nuages"), " %"), _v(r.get("temp")),
+                         _v(r.get("pluie")), _v(r.get("vent")), _v(r.get("rafales")), _v(r.get("cap"))])
+        tw = Table(rows, colWidths=[20 * mm, 22 * mm, 18 * mm, 26 * mm, 28 * mm, 30 * mm, 22 * mm])
+        tw.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), BLEU), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, -1), 8), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+            ("LINEBELOW", (0, 1), (-1, -1), 0.3, BORD),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f8fd")]),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ]))
+        story.append(tw)
+        story.append(Paragraph("Source : Open-Meteo. « Cap » = direction d'où vient le vent. "
+                               "Prévision à confronter au METAR/TAF le jour du vol.", SMALL))
+    elif meteo.get("hourlyError"):
+        story.append(Paragraph("Prévision horaire indisponible : " + str(meteo.get("hourlyError")), SMALL))
     if meteo.get("icao"):
         story.append(Paragraph(f"Aérodrome de référence : {meteo.get('icao')}", BODY))
     if meteo.get("metar"):
@@ -381,7 +641,7 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
     if meteo.get("taf"):
         story.append(Paragraph("TAF", H3N))
         story.append(Paragraph(meteo.get("taf", ""), MONO))
-    if not (meteo.get("metar") or meteo.get("taf")):
+    if not (hourly or meteo.get("metar") or meteo.get("taf")):
         story.append(Paragraph("Relevez la météo (onglet Mission → « Relever la météo ») avant le vol.", SMALL))
     story.append(PageBreak())
 
@@ -389,24 +649,14 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
     story.append(Paragraph("6 — Contexte (plan de vol)", H1N))
     pts = d.get("points", [])
     zone = d.get("zone") or []
-    markers = []
-    for pt in pts:
-        try:
-            markers.append((float(pt.get("lon")), float(pt.get("lat")),
-                            "#e67e22" if pt.get("type") == "observateur" else "#2f6fb0"))
-        except (TypeError, ValueError):
-            pass
-    # Carte du plan : zone dessinée + marqueurs (centre = 1er marqueur, sinon 1er sommet).
-    cen = None
-    if markers:
-        cen = (markers[0][1], markers[0][0])
-    elif len(zone) >= 1:
-        cen = (zone[0][0], zone[0][1])
-    if cen:
-        cm = _map_flowable(cen[0], cen[1], markers=markers or None, polygon=zone, zoom=16)
+    # Carte du plan avec marqueurs numérotés (numéros = # du tableau ci-dessous).
+    if pts or len(zone) >= 3:
+        cm = _plan_map_flowable(pts, polygon=zone, basemap="osm", size=(680, 460))
         if cm:
             cm.hAlign = "CENTER"
             story.append(cm)
+            story.append(Paragraph("Zone de vol en bleu. Points : décollage/atterrissage en bleu, "
+                                   "observateurs en orange (détail dans le tableau ci-dessous).", SMALL))
             story.append(Spacer(1, 6))
     if len(zone) >= 3:
         story.append(Paragraph("Surface de la zone de vol : " + _fmt_area(_poly_area_m2(zone)), BODY))

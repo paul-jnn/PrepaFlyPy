@@ -1,6 +1,6 @@
 """Version unique de l'application, lue par l'API, la CLI et le packaging."""
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 # Dépôt public (mise à jour, code source, releases).
 REPO = "paul-jnn/PrepaFlyPy"

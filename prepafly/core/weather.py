@@ -46,3 +46,63 @@ def brief(icao: str) -> dict:
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+# --- Prévision horaire (Open-Meteo, gratuit, sans clé) ------------------------
+OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
+
+
+def forecast_hourly(lat, lon, date: str = "", timeout: float = 10.0) -> dict:
+    """Prévision heure par heure pour un point (et une date si fournie).
+
+    Retour : {"ok", "date", "rows":[{heure,nuages,temp,pluie,vent,rafales,cap}], "error"}.
+    Ne garde que les heures de jour (6 h–21 h). vent/rafales en km/h, cap = direction
+    du vent en degrés. Open-Meteo ne fournit la prévision que ~16 jours à l'avance :
+    hors de cette fenêtre, on renvoie ok=False proprement.
+    """
+    try:
+        latf, lonf = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return {"ok": False, "date": date, "rows": [], "error": "Coordonnées manquantes"}
+    params = {
+        "latitude": latf, "longitude": lonf,
+        "hourly": "temperature_2m,precipitation,cloud_cover,wind_speed_10m,wind_gusts_10m,wind_direction_10m",
+        "wind_speed_unit": "kmh", "timezone": "Europe/Paris",
+    }
+    if date:
+        params["start_date"] = date
+        params["end_date"] = date
+    else:
+        params["forecast_days"] = 1
+    try:
+        r = httpx.get(OPEN_METEO, params=params, headers=_UA, timeout=timeout)
+        r.raise_for_status()
+        j = r.json()
+    except Exception as e:  # noqa: BLE001 - hors ligne / hors fenêtre de prévision
+        return {"ok": False, "date": date, "rows": [], "error": str(e)}
+    h = j.get("hourly", {}) or {}
+    times = h.get("time", []) or []
+
+    def col(name):
+        return h.get(name, []) or []
+    temp, prec, cloud = col("temperature_2m"), col("precipitation"), col("cloud_cover")
+    wind, gust, wdir = col("wind_speed_10m"), col("wind_gusts_10m"), col("wind_direction_10m")
+    rows = []
+    for i, ts in enumerate(times):
+        try:
+            hour = int(ts[11:13])
+        except (ValueError, IndexError):
+            continue
+        if hour < 6 or hour > 21:
+            continue
+
+        def g(arr):
+            return arr[i] if i < len(arr) and arr[i] is not None else None
+        rows.append({
+            "heure": ts[11:16],
+            "nuages": g(cloud), "temp": g(temp), "pluie": g(prec),
+            "vent": round(g(wind)) if g(wind) is not None else None,
+            "rafales": round(g(gust)) if g(gust) is not None else None,
+            "cap": g(wdir),
+        })
+    return {"ok": True, "date": date or (times[0][:10] if times else ""), "rows": rows, "error": ""}

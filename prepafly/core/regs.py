@@ -121,6 +121,108 @@ def criteres(d: dict) -> list[str]:
     return out
 
 
+# --- Démarches à effectuer par régime (déclaration / autorisation / etc.) ------
+# Chaque entrée : (type, titre, détail). Le type sert de pastille dans l'UI/PDF.
+_PROC_STS01 = [
+    ("declaration", "Déclaration préalable d'exploitation (STS-01)",
+     "Déposer la déclaration d'exploitation en catégorie spécifique sur AlphaTango, "
+     "au moins 5 jours ouvrables avant le vol. Recevoir l'accusé de réception avant d'opérer."),
+    ("enregistrement", "Enregistrement de l'exploitant UAS",
+     "Exploitant enregistré sur AlphaTango ; numéro d'exploitant apposé sur l'aéronef."),
+    ("competence", "Compétences du télépilote",
+     "CATS (théorique) + attestation de suivi de formation pratique STS-01 en cours de validité."),
+    ("materiel", "Aéronef de classe C5",
+     "Drone porteur du marquage de classe C5 (ou C3 muni du kit d'accessoires C5), "
+     "avec identification directe à distance et signalement électronique (masse ≥ 800 g)."),
+    ("document", "Manuel d'exploitation (MANEX)",
+     "MANEX à jour, procédures normales et d'urgence, disponible pendant l'exploitation."),
+    ("condition", "Conditions de vol STS-01",
+     "VLOS, hauteur ≤ 120 m, vitesse sol ≤ 5 m/s (aéronef non captif), zone au sol contrôlée "
+     "(tiers exclus), en zone peuplée ou hors zone peuplée."),
+    ("assurance", "Assurance responsabilité civile",
+     "Attestation d'assurance RC aéronef en cours de validité."),
+]
+
+_PROC_STS02 = [
+    ("declaration", "Déclaration préalable d'exploitation (STS-02)",
+     "Déclaration d'exploitation en catégorie spécifique sur AlphaTango, au moins 5 jours "
+     "ouvrables avant le vol ; accusé de réception avant d'opérer."),
+    ("enregistrement", "Enregistrement de l'exploitant UAS",
+     "Exploitant enregistré sur AlphaTango ; numéro apposé sur l'aéronef."),
+    ("competence", "Compétences du télépilote",
+     "CATS (théorique) + attestation de formation pratique STS-02."),
+    ("materiel", "Aéronef de classe C6",
+     "Drone de classe C6, identification directe à distance et signalement électronique."),
+    ("document", "Manuel d'exploitation (MANEX)", "MANEX à jour et disponible."),
+    ("condition", "Conditions de vol STS-02",
+     "BVLOS avec observateurs d'espace aérien, hauteur ≤ 120 m, zone au sol contrôlée "
+     "en zone peu peuplée."),
+    ("assurance", "Assurance responsabilité civile", "Attestation RC aéronef à jour."),
+]
+
+_PROC_OPEN = [
+    ("enregistrement", "Enregistrement de l'exploitant",
+     "Enregistrement sur AlphaTango dès que le drone dépasse 250 g ou embarque un capteur ; "
+     "numéro d'exploitant apposé sur l'aéronef."),
+    ("competence", "Compétences du télépilote",
+     "A1/A3 : formation en ligne + attestation. A2 : brevet d'aptitude (examen théorique) "
+     "en plus de la formation A1/A3."),
+    ("condition", "Conditions de la catégorie ouverte",
+     "Hauteur ≤ 120 m, en vue directe (VLOS), jamais au-dessus de rassemblements de personnes."),
+    ("condition", "Distances selon la sous-catégorie",
+     "A1 (drone C0/C1) : survol de tiers limité. A2 (C2) : ≥ 30 m des tiers (5 m en mode basse "
+     "vitesse). A3 (C2–C4) : ≥ 150 m des zones résidentielles/commerciales/industrielles."),
+    ("condition", "Pas de déclaration préalable",
+     "La catégorie ouverte ne nécessite ni déclaration ni autorisation d'exploitation."),
+    ("assurance", "Assurance responsabilité civile", "Assurance RC recommandée/obligatoire selon l'usage."),
+]
+
+_PROC_PDRA = [
+    ("autorisation", "Autorisation d'exploitation (PDRA)",
+     "Déposer une demande d'autorisation d'exploitation auprès de la DGAC sur la base du "
+     "scénario standard national / PDRA retenu."),
+    ("enregistrement", "Enregistrement de l'exploitant UAS", "Exploitant enregistré sur AlphaTango."),
+    ("document", "Manuel d'exploitation (MANEX)",
+     "MANEX conforme au PDRA, procédures normales et d'urgence."),
+    ("competence", "Compétences du télépilote",
+     "Formations et attestations exigées par le PDRA retenu."),
+    ("condition", "Respect des conditions du PDRA",
+     "Distances, hauteur, espace aérien et zone d'exclusion des tiers conformes au PDRA."),
+    ("assurance", "Assurance responsabilité civile", "Attestation RC aéronef à jour."),
+]
+
+_PROC_SORA = [
+    ("analyse", "Analyse de risque SORA",
+     "Réaliser l'analyse SORA (iGRC/GRC, ARC, SAIL) et déterminer les objectifs de sécurité (OSO)."),
+    ("autorisation", "Autorisation d'exploitation DGAC",
+     "Déposer une demande d'autorisation d'exploitation avec le dossier SORA ; opérer après "
+     "délivrance de l'autorisation."),
+    ("document", "Manuel d'exploitation (MANEX)",
+     "MANEX et démonstration de la robustesse des OSO au niveau exigé par le SAIL."),
+    ("enregistrement", "Enregistrement de l'exploitant UAS", "Exploitant enregistré sur AlphaTango."),
+    ("competence", "Compétences du télépilote",
+     "Compétences adaptées au SAIL et aux OSO (formation, entraînement, maintien de compétences)."),
+    ("assurance", "Assurance responsabilité civile", "Attestation RC aéronef à jour."),
+]
+
+PROC_TYPE_LABEL = {
+    "declaration": "Déclaration", "autorisation": "Autorisation", "competence": "Compétence",
+    "document": "Document", "materiel": "Matériel", "condition": "Condition",
+    "enregistrement": "Enregistrement", "assurance": "Assurance", "analyse": "Analyse",
+}
+
+
+def procedures(regime: str, sous_categorie: str = "") -> list[tuple[str, str, str]]:
+    """Démarches à effectuer pour le régime/scénario retenu : (type, titre, détail)."""
+    if regime == "sts":
+        return _PROC_STS02 if sous_categorie == "STS-02" else _PROC_STS01
+    if regime == "pdra":
+        return _PROC_PDRA
+    if regime == "sora":
+        return _PROC_SORA
+    return _PROC_OPEN
+
+
 # Catégories standard de contraintes et consigne réglementaire associée.
 CONTRAINTES_REF = [
     ("Zone urbaine / peuplée",
