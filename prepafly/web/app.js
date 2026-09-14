@@ -63,6 +63,8 @@ function field(label,obj,key,opts){
     inp=el('select');
     (opts.options||[]).forEach(o=>{const op=el('option'); op.value=o[0]; op.textContent=o[1]; inp.appendChild(op);});
   } else { inp=el('input'); inp.type=opts.type||'text'; }
+  // Exemple grisé (placeholder) : guide l'utilisateur, disparaît dès la saisie.
+  if(opts.ph && opts.type!=='select' && opts.type!=='date') inp.placeholder=opts.ph;
   if(opts.readonly){ inp.readOnly=true; if(opts.type==='select') inp.disabled=true; }
   inp.value=(obj[key]!=null?obj[key]:'');
   const ev=(opts.type==='select')?'change':'input';
@@ -233,13 +235,13 @@ function viewExploitant(v){
   const e=store.exploitant;
   const {card:c,body:cb}=collCard('exp-id',t('exp_ref_kick'),t('exp_ref_title'),t('exp_ref_desc'));
   const g=el('div','grid');
-  g.append(field(t('f_raison'),e,'raison'),field(t('f_forme'),e,'forme'),
-    field(t('f_siret'),e,'siret'),field(t('f_numuas'),e,'numUAS'),
-    field(t('f_resp'),e,'responsable'),field(t('f_assureur'),e,'assureur'),
-    field(t('f_adresse'),e,'adresse'),field(t('f_police'),e,'police'),
-    field(t('f_cp'),e,'cp'),field(t('f_ville'),e,'ville'),
-    field(t('f_tel'),e,'tel'),field(t('f_mail'),e,'mail'));
-  cb.appendChild(g); cb.appendChild(field(t('f_notes'),e,'notes',{type:'textarea',full:true}));
+  g.append(field(t('f_raison'),e,'raison',{ph:t('ph_raison')}),field(t('f_forme'),e,'forme',{ph:t('ph_forme')}),
+    field(t('f_siret'),e,'siret',{ph:t('ph_siret')}),field(t('f_numuas'),e,'numUAS',{ph:t('ph_numuas')}),
+    field(t('f_resp'),e,'responsable',{ph:t('ph_resp')}),field(t('f_assureur'),e,'assureur',{ph:t('ph_assureur')}),
+    field(t('f_adresse'),e,'adresse',{ph:t('ph_adresse')}),field(t('f_police'),e,'police',{ph:t('ph_police')}),
+    field(t('f_cp'),e,'cp',{ph:t('ph_cp')}),field(t('f_ville'),e,'ville',{ph:t('ph_ville')}),
+    field(t('f_tel'),e,'tel',{ph:t('ph_tel')}),field(t('f_mail'),e,'mail',{ph:t('ph_mail')}));
+  cb.appendChild(g); cb.appendChild(field(t('f_notes'),e,'notes',{type:'textarea',full:true,ph:t('ph_notes_exp')}));
   v.appendChild(c);
 
   const {card:lc,body:lb}=collCard('exp-logo',t('exp_logo_kick'),t('exp_logo_title'),t('exp_logo_desc'),false);
@@ -283,9 +285,9 @@ function viewPilotes(v){
     rowb.append(ref,del); body.appendChild(rowb);
     const g=el('div','grid');
     const upd=()=>{nm.textContent=((p.prenom||'')+' '+(p.nom||'')).trim()||t('pilot_noname');};
-    g.append(field(t('f_prenom'),p,'prenom',{after:upd}),field(t('f_nom'),p,'nom',{after:upd}),
-      field(t('f_tel'),p,'tel'),field(t('f_mail'),p,'mail'),
-      field(t('f_numtele'),p,'numTele'),field(t('f_brevets'),p,'brevets'));
+    g.append(field(t('f_prenom'),p,'prenom',{after:upd,ph:t('ph_prenom')}),field(t('f_nom'),p,'nom',{after:upd,ph:t('ph_nom')}),
+      field(t('f_tel'),p,'tel',{ph:t('ph_tel')}),field(t('f_mail'),p,'mail',{ph:t('ph_mail')}),
+      field(t('f_numtele'),p,'numTele',{ph:t('ph_numtele')}),field(t('f_brevets'),p,'brevets',{ph:t('ph_brevets')}));
     body.appendChild(g);
     body.appendChild(el('div','note',t('pilot_mentions')));
     const chips=el('div','chips');
@@ -304,7 +306,7 @@ function viewPilotes(v){
     });
     const addH=el('button','btn sm',t('btn_add_habil'));addH.onclick=()=>{p.habilitations.push({t:'',d:''});scheduleSave();renderView();};
     body.appendChild(addH);
-    body.appendChild(field(t('f_notes'),p,'notes',{type:'textarea',full:true}));
+    body.appendChild(field(t('f_notes'),p,'notes',{type:'textarea',full:true,ph:t('ph_notes_pilote')}));
     acc.append(head,body); v.appendChild(acc);
   });
 }
@@ -361,13 +363,13 @@ function viewDossier(v){
 function tabMission(v,D){
   const c=card(t('mission_kick'),t('mission_title'),t('mission_desc'));
   const g=el('div','grid');
-  g.append(field(t('f_intitule'),D,'titre',{after:()=>{}}),field(t('f_client'),D,'client'),
+  g.append(field(t('f_intitule'),D,'titre',{after:()=>{},ph:t('ph_titre')}),field(t('f_client'),D,'client',{ph:t('ph_client')}),
     field(t('f_datedebut'),D,'dateDebut',{type:'date'}),field(t('f_datefin'),D,'dateFin',{type:'date'}),
-    field(t('f_hauteur'),D,'hauteurMax',{type:'number'}),
+    field(t('f_hauteur'),D,'hauteurMax',{type:'number',ph:t('ph_hauteur')}),
     field(t('f_typevol'),D,'typeVol',{type:'select',options:optTypevol()}),
     field(t('f_env'),D,'environnement',{type:'select',options:optEnv()}),
     field(t('f_dist'),D,'distanceTiers',{type:'select',options:optDist()}));
-  c.appendChild(g); c.appendChild(field(t('f_notes_mission'),D,'notes',{type:'textarea',full:true})); v.appendChild(c);
+  c.appendChild(g); c.appendChild(field(t('f_notes_mission'),D,'notes',{type:'textarea',full:true,ph:t('ph_notes_mission')})); v.appendChild(c);
 
   const ac=card(t('appareil_kick'),t('appareil_title'),t('appareil_desc'));
   const opts=[['',t('opt_choose_dji')]]; let lastCat='';
@@ -377,12 +379,12 @@ function tabMission(v,D){
   const isDji=!!dronesDB.all.find(d=>d.key===D.appareil.key);
   if(!Array.isArray(D.appareil.equipements))D.appareil.equipements=[];
   const g2=el('div','grid3');
-  g2.append(field(t('f_marque'),D.appareil,'marque',{readonly:isDji}),field(t('f_modele'),D.appareil,'modele',{readonly:isDji}),
+  g2.append(field(t('f_marque'),D.appareil,'marque',{readonly:isDji,ph:t('ph_marque')}),field(t('f_modele'),D.appareil,'modele',{readonly:isDji,ph:t('ph_modele')}),
     field(t('f_classe'),D,'classeC',{type:'select',options:CLASSES}),
-    field(t('f_dim'),D.grc,'dim',{readonly:isDji}),field(t('f_vitmax'),D.grc,'vit',{readonly:isDji}),
-    field(t('f_masse'),D.appareil,'masse',{readonly:isDji}),
-    field(t('f_geoloc'),D.appareil,'geoloc'),field(t('f_serie'),D.appareil,'serie'),
-    field(t('f_numid'),D.appareil,'numId'),field(t('f_numenr'),D.appareil,'numEnr'));
+    field(t('f_dim'),D.grc,'dim',{readonly:isDji,ph:t('ph_dim')}),field(t('f_vitmax'),D.grc,'vit',{readonly:isDji,ph:t('ph_vitmax')}),
+    field(t('f_masse'),D.appareil,'masse',{readonly:isDji,ph:t('ph_masse')}),
+    field(t('f_geoloc'),D.appareil,'geoloc',{ph:t('ph_geoloc')}),field(t('f_serie'),D.appareil,'serie',{ph:t('ph_serie')}),
+    field(t('f_numid'),D.appareil,'numId',{ph:t('ph_numid')}),field(t('f_numenr'),D.appareil,'numEnr',{ph:t('ph_numenr')}));
   ac.appendChild(g2);
   // Équipements embarqués (liste éditable).
   ac.appendChild(el('div','note',t('equip_title')));
@@ -399,9 +401,9 @@ function tabMission(v,D){
 
   const mc=card(t('site_kick'),t('site_title'),t('site_desc'));
   const g3=el('div','grid');
-  g3.append(field(t('f_adresse'),D,'siteAdresse'),field(t('f_ville'),D,'siteVille'),
-    field(t('f_cp'),D,'siteCp'),field(t('f_icao'),D,'icao'),
-    field(t('f_lat'),D,'lat'),field(t('f_lon'),D,'lon'));
+  g3.append(field(t('f_adresse'),D,'siteAdresse',{ph:t('ph_siteadresse')}),field(t('f_ville'),D,'siteVille',{ph:t('ph_siteville')}),
+    field(t('f_cp'),D,'siteCp',{ph:t('ph_sitecp')}),field(t('f_icao'),D,'icao',{ph:t('ph_icao')}),
+    field(t('f_lat'),D,'lat',{ph:t('ph_lat')}),field(t('f_lon'),D,'lon',{ph:t('ph_lon')}));
   mc.appendChild(g3);
   const bar=el('div','row-actions');
   const geo=el('button','btn',t('btn_geoloc'));geo.onclick=()=>geocodeSite(D);
@@ -418,8 +420,8 @@ function tabMission(v,D){
     const bd=badge(pt.type==='observateur'?'b-orange':'b-blue',pt.type==='observateur'?t('pt_observer'):t('pt_takeoff'));
     const nm=el('input');nm.value=pt.intitule||'';nm.placeholder=t('pt_intitule_ph');nm.style.flex='1';
     nm.oninput=()=>{pt.intitule=nm.value;scheduleSave();};
-    const la=el('input');la.value=pt.lat||'';la.placeholder='lat';la.style.width='90px';la.oninput=()=>{pt.lat=la.value;scheduleSave();};
-    const lo=el('input');lo.value=pt.lon||'';lo.placeholder='lon';lo.style.width='90px';lo.oninput=()=>{pt.lon=lo.value;scheduleSave();};
+    const la=el('input');la.value=pt.lat||'';la.placeholder=t('ph_lat');la.style.width='100px';la.oninput=()=>{pt.lat=la.value;scheduleSave();};
+    const lo=el('input');lo.value=pt.lon||'';lo.placeholder=t('ph_lon');lo.style.width='100px';lo.oninput=()=>{pt.lon=lo.value;scheduleSave();};
     const rm=el('button','btn danger sm','−');rm.onclick=()=>{D.points.splice(i,1);scheduleSave();renderView();};
     row.append(bd,nm,la,lo,rm);cc.appendChild(row);});
   if(!D.points.length)cc.appendChild(el('div','note',t('pt_none')));
@@ -429,8 +431,7 @@ function tabMission(v,D){
   const addO=el('button','btn sm',t('btn_add_observer'));
   addO.onclick=()=>{D.points.push({type:'observateur',intitule:'',lat:'',lon:''});scheduleSave();renderView();};
   barp.append(addT,addO);cc.appendChild(barp);
-  cc.appendChild(field(t('f_contraintes'),D,'contraintesNotes',{type:'textarea',rows:3,full:true,after:()=>{}}));
-  const ta=cc.querySelector('textarea');if(ta)ta.placeholder=t('contraintes_ph');
+  cc.appendChild(field(t('f_contraintes'),D,'contraintesNotes',{type:'textarea',rows:3,full:true,ph:t('contraintes_ph')}));
   v.appendChild(cc);
 }
 function applyModel(D){
@@ -510,7 +511,7 @@ function tabConformite(v,D){
 function tabSora(v,D){
   const g=card(t('sora_grc_kick'),t('sora_grc_steps'),t('sora_grc_desc'));
   const gg=el('div','grid');
-  gg.append(field(t('f_dim'),D.grc,'dim'),field(t('f_vit'),D.grc,'vit'),
+  gg.append(field(t('f_dim'),D.grc,'dim',{ph:t('ph_dim')}),field(t('f_vit'),D.grc,'vit',{ph:t('ph_vitmax')}),
     field(t('f_densite'),D.grc,'densite',{type:'select',options:optDensite()}),
     field(t('f_m1a'),D.grc,'m1a',{type:'select',options:optMitA()}),
     field(t('f_m1b'),D.grc,'m1b',{type:'select',options:optMitB()}),
