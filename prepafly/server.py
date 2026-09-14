@@ -19,8 +19,8 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .core import (drones, forms, geocode, i18n, models, regimes, reports,
-                   shortcuts, sora, storage, updater, weather)
+from .core import (airspace, drones, forms, geocode, i18n, models, regimes,
+                   reports, shortcuts, sora, storage, updater, weather)
 from .core.version import RELEASES_URL, REPO_URL, __version__
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -141,6 +141,12 @@ async def pin_verify(request: Request):
 @app.get("/api/weather")
 def api_weather(icao: str):
     return weather.brief(icao)
+
+
+@app.get("/api/restrictions")
+def api_restrictions(lat: float, lon: float):
+    # Contraintes drone au point (interrogation IGN, côté serveur pour éviter CORS).
+    return airspace.query_restrictions(lat, lon)
 
 
 @app.get("/api/geocode")

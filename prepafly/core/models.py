@@ -44,6 +44,8 @@ def empty_dossier() -> dict:
                      "equipements": [], "numId": "", "numEnr": "", "geoloc": ""},
         # Points de contexte : décollage/atterrissage et observateurs (type, intitulé, lat, lon).
         "points": [],
+        # Zone de vol dessinée sur la carte : liste de sommets [lat, lon].
+        "zone": [],
         # Contraintes / points de vigilance notés par l'exploitant.
         "contraintesNotes": "",
         "grc": {"dim": "", "vit": "", "densite": "", "mini": False,
@@ -83,6 +85,8 @@ def norm_dossier(d) -> dict:
         nd["journal"] = []
     if not isinstance(nd.get("points"), list):
         nd["points"] = []
+    if not isinstance(nd.get("zone"), list):
+        nd["zone"] = []
     if not isinstance(nd["appareil"].get("equipements"), list):
         nd["appareil"]["equipements"] = []
     return nd

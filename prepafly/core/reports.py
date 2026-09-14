@@ -43,17 +43,23 @@ COVERS = ParagraphStyle("CoverS", parent=BODY, fontSize=13, alignment=1, textCol
 MONO = ParagraphStyle("Mono", parent=BODY, fontName="Courier", fontSize=8.5, leading=11)
 
 
-def _static_map_png(lat, lon, size=(455, 250), zoom=15, markers=None):
+def _static_map_png(lat, lon, size=(455, 250), zoom=15, markers=None, polygon=None):
     """Rend une carte statique (tuiles OSM) centrée sur le point. Renvoie des
-    octets PNG, ou None si indisponible (hors ligne, tuiles inaccessibles)."""
+    octets PNG, ou None si indisponible (hors ligne, tuiles inaccessibles).
+    polygon : liste de sommets [lat, lon] tracés en zone de vol (optionnel)."""
     try:
         latf, lonf = float(lat), float(lon)
     except (TypeError, ValueError):
         return None
     try:
         import contextlib
-        from staticmap import CircleMarker, StaticMap
+        from staticmap import CircleMarker, Line, StaticMap
         m = StaticMap(size[0], size[1], url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        # Zone de vol : contour fermé tracé sous les marqueurs (Line = rendu sûr).
+        if polygon and len(polygon) >= 3:
+            coords = [(p[1], p[0]) for p in polygon]  # staticmap attend (lon, lat)
+            coords.append(coords[0])
+            m.add_line(Line(coords, "#2f6fb0", 3))
         pts = markers if markers else [(lonf, latf, "#c0392b")]
         for mlon, mlat, color in pts:
             m.add_marker(CircleMarker((mlon, mlat), color, 11))
@@ -78,6 +84,25 @@ def _map_flowable(lat, lon, **kw):
         img.drawWidth *= r
         img.drawHeight *= r
     return img
+
+
+def _poly_area_m2(zone) -> float:
+    """Aire sphérique approchée (m²) d'un polygone [[lat, lon], ...]."""
+    if not zone or len(zone) < 3:
+        return 0.0
+    import math
+    R = 6378137.0
+    a = 0.0
+    n = len(zone)
+    for i in range(n):
+        lat1, lon1 = zone[i]
+        lat2, lon2 = zone[(i + 1) % n]
+        a += math.radians(lon2 - lon1) * (2 + math.sin(math.radians(lat1)) + math.sin(math.radians(lat2)))
+    return abs(a * R * R / 2.0)
+
+
+def _fmt_area(m2: float) -> str:
+    return f"{round(m2)} m²" if m2 < 10000 else f"{m2 / 10000:.2f} ha"
 
 
 def _logo_flowable(logo) -> Optional[Image]:
@@ -198,7 +223,7 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
                  "3 — Classification (régime, critères, réglementation)",
                  "4 — Contraintes & points de vigilance",
                  "5 — Météo",
-                 "6 — Contexte (points de décollage et observateurs)"]:
+                 "6 — Contexte (plan de vol : zone, points de décollage et observateurs)"]:
         story.append(Paragraph(line, BODY))
     story.append(PageBreak())
 
@@ -206,7 +231,11 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
     story.append(Paragraph("1 — Vue d'ensemble", H1N))
     story.append(Paragraph("<b>Titre</b>", BODY))
     story.append(Paragraph(d.get("titre") or "—", BODY))
-    mp = _map_flowable(d.get("lat"), d.get("lon"))
+    zone = d.get("zone") or []
+    clat, clon = d.get("lat"), d.get("lon")
+    if (not clat or not clon) and len(zone) >= 1:
+        clat, clon = zone[0][0], zone[0][1]
+    mp = _map_flowable(clat, clon, polygon=zone)
     if mp:
         story.append(Spacer(1, 6))
         story.append(Paragraph("<b>Zone de vol</b>", BODY))
@@ -214,13 +243,16 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
         story.append(mp)
         story.append(Spacer(1, 6))
     loc = ", ".join(x for x in [d.get("siteAdresse"), d.get("siteCp"), d.get("siteVille")] if x) or d.get("lieu", "")
-    story.append(_kv_table([
+    rows = [
         ("Localisation", loc),
         ("Coordonnées", f"{d.get('lat')}, {d.get('lon')}" if d.get("lat") and d.get("lon") else "—"),
         ("Dates", dates or "—"),
         ("Hauteur maximum (m)", str(d.get("hauteurMax") or "—")),
         ("Vitesse maximale appareil (m/s)", str(d.get("grc", {}).get("vit") or "—")),
-    ]))
+    ]
+    if len(zone) >= 3:
+        rows.append(("Surface de la zone", _fmt_area(_poly_area_m2(zone))))
+    story.append(_kv_table(rows))
     if d.get("notes"):
         story.append(Paragraph("Informations complémentaires", H3N))
         story.append(Paragraph(d.get("notes"), BODY))
@@ -354,8 +386,9 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
     story.append(PageBreak())
 
     # ---------- 6 Contexte ----------
-    story.append(Paragraph("6 — Contexte (points de vol)", H1N))
+    story.append(Paragraph("6 — Contexte (plan de vol)", H1N))
     pts = d.get("points", [])
+    zone = d.get("zone") or []
     markers = []
     for pt in pts:
         try:
@@ -363,12 +396,20 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
                             "#e67e22" if pt.get("type") == "observateur" else "#2f6fb0"))
         except (TypeError, ValueError):
             pass
+    # Carte du plan : zone dessinée + marqueurs (centre = 1er marqueur, sinon 1er sommet).
+    cen = None
     if markers:
-        cm = _map_flowable(markers[0][1], markers[0][0], markers=markers, zoom=16)
+        cen = (markers[0][1], markers[0][0])
+    elif len(zone) >= 1:
+        cen = (zone[0][0], zone[0][1])
+    if cen:
+        cm = _map_flowable(cen[0], cen[1], markers=markers or None, polygon=zone, zoom=16)
         if cm:
             cm.hAlign = "CENTER"
             story.append(cm)
             story.append(Spacer(1, 6))
+    if len(zone) >= 3:
+        story.append(Paragraph("Surface de la zone de vol : " + _fmt_area(_poly_area_m2(zone)), BODY))
     if pts:
         rows = [["#", "Type", "Intitulé", "Latitude", "Longitude"]]
         for i, pt in enumerate(pts, 1):
@@ -381,9 +422,9 @@ def dossier_pdf(store: dict, dossier: dict) -> bytes:
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
         story.append(tp)
-    else:
-        story.append(Paragraph("Ajoutez vos points de décollage/atterrissage et d'observateurs "
-                               "(onglet Site → Contexte).", SMALL))
+    elif not zone:
+        story.append(Paragraph("Dessinez la zone de vol et placez vos points "
+                               "(onglet « Plan de vol »).", SMALL))
 
     # ---------- Check-list & journal ----------
     prevol = d.get("prevol", {})

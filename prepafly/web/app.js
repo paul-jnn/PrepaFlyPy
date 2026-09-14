@@ -336,7 +336,7 @@ function emptyDossier(){return {id:'d'+Math.random().toString(36).slice(2,10),ti
   dateDebut:'',dateFin:'',hauteurMax:'',classeC:'',typeVol:'',environnement:'',distanceTiers:'',
   siteAdresse:'',siteCp:'',siteVille:'',lat:'',lon:'',icao:'',meteo:{},regime:'',sousCategorie:'',pdra:'',
   appareil:{key:'',marque:'',modele:'',masse:'',serie:'',equipements:[],numId:'',numEnr:'',geoloc:''},
-  points:[],contraintesNotes:'',
+  points:[],zone:[],contraintesNotes:'',
   grc:{dim:'',vit:'',densite:'',mini:false,m1a:'none',m1b:'none',m1c:'none',m2:'none'},
   arc:{atypical:'',fl600:'',airport:'',airportClass:'',above500:'',adsb:'',eac:'',urban:'',residual:'',reduceJust:'',tacJust:''},
   prevol:{},journal:[],forms:{regime:'',expType:'morale',derogType:'',aotGestionnaire:'',aotObjet:''}};}
@@ -353,11 +353,11 @@ function viewDossier(v){
   top.appendChild(del); v.appendChild(top);
   v.appendChild(el('h1','page-h',D.titre||t('dossier_default_title')));
   const tabs=el('div','tabs');
-  const TABS=[['mission',t('tab_mission')],['regime',t('tab_regime')],['conformite',t('tab_conformite')],['sora',t('tab_sora')],
+  const TABS=[['mission',t('tab_mission')],['plan',t('tab_plan')],['regime',t('tab_regime')],['conformite',t('tab_conformite')],['sora',t('tab_sora')],
     ['prevol',t('tab_prevol')],['journal',t('tab_journal')],['docs',t('tab_docs')]];
   TABS.forEach(([k,label])=>{const b=el('button','tab'+(dossierTab===k?' on':''),label);b.onclick=()=>{dossierTab=k;renderView();};tabs.appendChild(b);});
   v.appendChild(tabs);
-  ({mission:tabMission,regime:tabRegime,conformite:tabConformite,sora:tabSora,prevol:tabPrevol,journal:tabJournal,docs:tabDocs}[dossierTab])(v,D);
+  ({mission:tabMission,plan:tabPlan,regime:tabRegime,conformite:tabConformite,sora:tabSora,prevol:tabPrevol,journal:tabJournal,docs:tabDocs}[dossierTab])(v,D);
 }
 
 function tabMission(v,D){
@@ -413,24 +413,8 @@ function tabMission(v,D){
   if(D.meteo&&D.meteo.metar){mc.appendChild(el('div','note','METAR : '+D.meteo.metar));}
   v.appendChild(mc);
 
-  // ---- Contexte : points de vol + contraintes ----
-  if(!Array.isArray(D.points))D.points=[];
+  // ---- Contraintes relevées (les points/zone se gèrent dans l'onglet « Plan de vol ») ----
   const cc=card(t('context_kick'),t('context_title'),t('context_desc'));
-  D.points.forEach((pt,i)=>{const row=el('div','row-actions');
-    const bd=badge(pt.type==='observateur'?'b-orange':'b-blue',pt.type==='observateur'?t('pt_observer'):t('pt_takeoff'));
-    const nm=el('input');nm.value=pt.intitule||'';nm.placeholder=t('pt_intitule_ph');nm.style.flex='1';
-    nm.oninput=()=>{pt.intitule=nm.value;scheduleSave();};
-    const la=el('input');la.value=pt.lat||'';la.placeholder=t('ph_lat');la.style.width='100px';la.oninput=()=>{pt.lat=la.value;scheduleSave();};
-    const lo=el('input');lo.value=pt.lon||'';lo.placeholder=t('ph_lon');lo.style.width='100px';lo.oninput=()=>{pt.lon=lo.value;scheduleSave();};
-    const rm=el('button','btn danger sm','−');rm.onclick=()=>{D.points.splice(i,1);scheduleSave();renderView();};
-    row.append(bd,nm,la,lo,rm);cc.appendChild(row);});
-  if(!D.points.length)cc.appendChild(el('div','note',t('pt_none')));
-  const barp=el('div','row-actions');
-  const addT=el('button','btn sm',t('btn_add_takeoff'));
-  addT.onclick=()=>{D.points.push({type:'decollage',intitule:'',lat:D.lat||'',lon:D.lon||''});scheduleSave();renderView();};
-  const addO=el('button','btn sm',t('btn_add_observer'));
-  addO.onclick=()=>{D.points.push({type:'observateur',intitule:'',lat:'',lon:''});scheduleSave();renderView();};
-  barp.append(addT,addO);cc.appendChild(barp);
   cc.appendChild(field(t('f_contraintes'),D,'contraintesNotes',{type:'textarea',rows:3,full:true,ph:t('contraintes_ph')}));
   v.appendChild(cc);
 }
@@ -466,6 +450,105 @@ function openMap(D){
     D.lat=e.latlng.lat.toFixed(6);D.lon=e.latlng.lng.toFixed(6);scheduleSave();});
   close.onclick=()=>{document.body.removeChild(ov);renderView();};
   setTimeout(()=>m.invalidateSize(),120);
+}
+
+/* ---------- Plan de vol (carte de dessin : zone, marqueurs, mesures) ---------- */
+function polyAreaM2(ll){ // ll: [[lat,lon],...] — aire sphérique approchée (m²)
+  if(!ll||ll.length<3)return 0; const R=6378137; let a=0;
+  for(let i=0;i<ll.length;i++){ const p1=ll[i], p2=ll[(i+1)%ll.length];
+    a+=(p2[1]-p1[1])*Math.PI/180*(2+Math.sin(p1[0]*Math.PI/180)+Math.sin(p2[0]*Math.PI/180)); }
+  return Math.abs(a*R*R/2);
+}
+function distM(a,b){ const R=6371000, r=x=>x*Math.PI/180;
+  const dLat=r(b.lat-a.lat), dLon=r(b.lng-a.lng);
+  const s=Math.sin(dLat/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function fmtArea(m2){ return m2<10000?Math.round(m2)+' m²':(m2/10000).toFixed(2)+' ha'; }
+function fmtDist(m){ return m<1000?Math.round(m)+' m':(m/1000).toFixed(2)+' km'; }
+
+function tabPlan(v,D){
+  if(!Array.isArray(D.zone))D.zone=[];
+  if(!Array.isArray(D.points))D.points=[];
+  const c=card(t('plan_kick'),t('plan_title'),t('plan_desc'));
+  const bar=el('div','row-actions');
+  const bZone=el('button','btn primary',t('plan_draw_zone'));
+  const bClrZone=el('button','btn',t('plan_clear_zone'));
+  const bTO=el('button','btn',t('plan_add_takeoff'));
+  const bOBS=el('button','btn',t('plan_add_observer'));
+  const bMeas=el('button','btn',t('plan_measure'));
+  const bClrMeas=el('button','btn',t('plan_clear_measure'));
+  bar.append(bZone,bClrZone,bTO,bOBS,bMeas,bClrMeas); c.appendChild(bar);
+  const md=el('div');md.id='planmap';
+  md.style.cssText='height:60vh;min-height:380px;border:1px solid var(--bord);border-radius:12px;overflow:hidden;margin-top:8px';
+  c.appendChild(md);
+  const stat=el('div','note',''); c.appendChild(stat);
+  const listWrap=el('div');listWrap.style.marginTop='8px'; c.appendChild(listWrap);
+  v.appendChild(c);
+  setTimeout(()=>initPlan(D,{bZone,bClrZone,bTO,bOBS,bMeas,bClrMeas,stat,listWrap}),60);
+}
+function initPlan(D,ui){
+  const osm=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
+  const resto=geopfLayer('TRANSPORTS.DRONES.RESTRICTIONS','image/png'); resto.setOpacity(0.55);
+  let center=[46.7,-1.42], zoom=8;
+  if(D.zone.length){ center=D.zone[0]; zoom=15; }
+  else if(D.points.length){ const p=D.points[0]; const la=parseFloat(p.lat),lo=parseFloat(p.lon); if(!isNaN(la)&&!isNaN(lo)){center=[la,lo];zoom=16;} }
+  else if(D.lat&&D.lon){ center=[parseFloat(D.lat),parseFloat(D.lon)]; zoom=15; }
+  const map=L.map('planmap',{center,zoom,layers:[osm,resto]});
+  const bases={}; bases[t('layer_osm')]=osm; const ov={}; ov[t('layer_resto')]=resto;
+  L.control.layers(bases,ov,{collapsed:true}).addTo(map);
+  const drawn=new L.FeatureGroup().addTo(map);
+  const markerLayer=L.layerGroup().addTo(map);
+  const measureLayer=L.layerGroup().addTo(map);
+  let zoneLayer=null, measuring=false, measurePts=[], drawing=false, armType=null;
+
+  function drawZoneLayer(){ if(zoneLayer){drawn.removeLayer(zoneLayer);zoneLayer=null;}
+    if(D.zone.length>=3){ zoneLayer=L.polygon(D.zone,{color:'#2f6fb0',weight:2,fillOpacity:0.12}).addTo(drawn); } }
+  function updateStat(){ let s='';
+    if(D.zone.length>=3) s=t('plan_area',{v:fmtArea(polyAreaM2(D.zone))});
+    ui.stat.textContent=s; }
+  function refreshMarkers(){ markerLayer.clearLayers(); ui.listWrap.innerHTML='';
+    if(!D.points.length){ ui.listWrap.appendChild(el('div','note',t('pt_none'))); }
+    D.points.forEach((pt,i)=>{ const la=parseFloat(pt.lat),lo=parseFloat(pt.lon);
+      const isObs=pt.type==='observateur'; const color=isObs?'#e67e22':'#2f6fb0';
+      if(!isNaN(la)&&!isNaN(lo)){ const m=L.circleMarker([la,lo],{radius:8,color:'#fff',weight:2,fillColor:color,fillOpacity:1}).addTo(markerLayer);
+        m.bindTooltip((i+1)+' · '+(isObs?t('pt_observer'):t('pt_takeoff'))); }
+      const row=el('div','row-actions');
+      row.appendChild(badge(isObs?'b-orange':'b-blue',(i+1)+' '+(isObs?t('pt_observer'):t('pt_takeoff'))));
+      const nm=el('input');nm.value=pt.intitule||'';nm.placeholder=t('pt_intitule_ph');nm.style.flex='1';
+      nm.oninput=()=>{pt.intitule=nm.value;scheduleSave();};
+      const rm=el('button','btn danger sm','−');rm.onclick=()=>{D.points.splice(i,1);scheduleSave();refreshMarkers();};
+      row.append(nm,rm); ui.listWrap.appendChild(row); });
+  }
+  drawZoneLayer(); updateStat(); refreshMarkers();
+
+  const hasDraw=!!(L.Draw&&L.Draw.Event);
+  if(hasDraw){
+    map.on(L.Draw.Event.DRAWSTART,()=>{drawing=true;});
+    map.on(L.Draw.Event.DRAWSTOP,()=>{setTimeout(()=>{drawing=false;},60);});
+    map.on(L.Draw.Event.CREATED,e=>{ const ll=e.layer.getLatLngs()[0]||[];
+      D.zone=ll.map(p=>[+p.lat.toFixed(6),+p.lng.toFixed(6)]); scheduleSave(); drawZoneLayer(); updateStat(); });
+  }
+  ui.bZone.onclick=()=>{ if(!hasDraw){alert(t('plan_nodraw'));return;} armType=null; measuring=false; ui.bMeas.classList.remove('primary');
+    new L.Draw.Polygon(map,{shapeOptions:{color:'#2f6fb0'},allowIntersection:false}).enable(); ui.stat.textContent=t('plan_draw_hint'); };
+  ui.bClrZone.onclick=()=>{ D.zone=[]; scheduleSave(); drawZoneLayer(); updateStat(); };
+  ui.bTO.onclick=()=>{ armType='decollage'; ui.stat.textContent=t('plan_click_place'); };
+  ui.bOBS.onclick=()=>{ armType='observateur'; ui.stat.textContent=t('plan_click_place'); };
+  ui.bMeas.onclick=()=>{ measuring=!measuring; measurePts=[]; measureLayer.clearLayers(); armType=null;
+    ui.bMeas.classList.toggle('primary',measuring); ui.stat.textContent=measuring?t('plan_measure_on'):''; if(!measuring)updateStat(); };
+  ui.bClrMeas.onclick=()=>{ measuring=false; measurePts=[]; measureLayer.clearLayers(); ui.bMeas.classList.remove('primary'); updateStat(); };
+
+  map.on('click',e=>{
+    if(drawing) return;
+    if(armType){ D.points.push({type:armType,intitule:'',lat:e.latlng.lat.toFixed(6),lon:e.latlng.lng.toFixed(6)});
+      armType=null; scheduleSave(); refreshMarkers(); updateStat(); return; }
+    if(measuring){ measurePts.push(e.latlng); measureLayer.clearLayers();
+      L.polyline(measurePts,{color:'#c0392b',weight:2,dashArray:'5,5'}).addTo(measureLayer);
+      measurePts.forEach(p=>L.circleMarker(p,{radius:4,color:'#c0392b',fillColor:'#c0392b',fillOpacity:1}).addTo(measureLayer));
+      let tot=0; for(let i=1;i<measurePts.length;i++)tot+=distM(measurePts[i-1],measurePts[i]);
+      ui.stat.textContent=t('plan_dist',{v:fmtDist(tot)}); return; }
+  });
+  setTimeout(()=>map.invalidateSize(),150);
 }
 
 function tabRegime(v,D){
@@ -625,9 +708,26 @@ function viewCarte(v){
   md.style.cssText='height:70vh;min-height:420px;border:1px solid var(--bord);border-radius:12px;overflow:hidden';
   v.appendChild(md);
   const coord=el('div','note',t('carte_click')); v.appendChild(coord);
-  setTimeout(()=>initCarte(search,go,coord),60);
+  const info=el('div'); info.id='restoInfo'; info.style.marginTop='10px'; v.appendChild(info);
+  setTimeout(()=>initCarte(search,go,coord,info),60);
 }
-function initCarte(search,go,coord){
+/* Interroge IGN pour les contraintes au point cliqué et les liste sous la carte. */
+async function queryResto(latlng,info){
+  info.innerHTML='';
+  info.appendChild(el('div','note',t('resto_loading')));
+  try{
+    const r=await apiGet('/api/restrictions?lat='+latlng.lat+'&lon='+latlng.lng);
+    info.innerHTML='';
+    if(!r.ok){ info.appendChild(el('div','warn',t('resto_err',{e:r.error}))); return; }
+    const c=card(null,t('resto_title',{n:r.count}),'');
+    if(!r.count){ c.appendChild(el('div','note',t('resto_none'))); }
+    else{ r.features.forEach(f=>{ const row=el('div','ck');
+      row.appendChild(badge('b-orange','⚠')); row.appendChild(el('span',null,f.label)); c.appendChild(row); }); }
+    c.appendChild(el('div','note',t('resto_disclaimer')));
+    info.appendChild(c);
+  }catch(e){ info.innerHTML=''; info.appendChild(el('div','warn',t('resto_err',{e:(e.message||e)}))); }
+}
+function initCarte(search,go,coord,info){
   const osm=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
   const plan=geopfLayer('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2','image/png');
   const ortho=geopfLayer('ORTHOIMAGERY.ORTHOPHOTOS','image/jpeg');
@@ -638,10 +738,12 @@ function initCarte(search,go,coord){
   L.control.layers(bases,overlays,{collapsed:false}).addTo(map);
   let mk=null;
   map.on('click',e=>{ coord.textContent=e.latlng.lat.toFixed(5)+', '+e.latlng.lng.toFixed(5);
-    if(mk)mk.setLatLng(e.latlng); else mk=L.marker(e.latlng).addTo(map); });
+    if(mk)mk.setLatLng(e.latlng); else mk=L.marker(e.latlng).addTo(map);
+    if(info) queryResto(e.latlng,info); });
   async function jump(){ const q=search.value.trim(); if(!q)return;
     try{ const r=await apiGet('/api/geocode?q='+encodeURIComponent(q)); map.setView([r.lat,r.lon],14);
       if(mk)mk.setLatLng([r.lat,r.lon]); else mk=L.marker([r.lat,r.lon]).addTo(map);
+      if(info) queryResto({lat:r.lat,lng:r.lon},info);
     }catch(e){ alert(t('addr_notfound')); } }
   go.onclick=jump; search.addEventListener('keydown',e=>{ if(e.key==='Enter')jump(); });
   setTimeout(()=>map.invalidateSize(),150);
